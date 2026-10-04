@@ -1,0 +1,50 @@
+# Python virtual environments
+.venv/
+venv/
+backend/.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+secrets/
+private/
+keys/
+
+# Private cryptographic material
+*-private.pem
+*_private.pem
+*.key
+*.p12
+*.pfx
+
+# Temporary generated files
+uploads/
+outputs/
+temp/
+tmp/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build outputs
+build/
+dist/
+target/
+*.egg-info/
+
+# Rust local build output
+**/target/
+
+# Logs
+*.log
