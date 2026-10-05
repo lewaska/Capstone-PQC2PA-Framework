@@ -1,7 +1,8 @@
-/* Research frontend: no cryptographic verdict is produced without a verifier. */
+const INSPECT_API_URL =
+  "http://127.0.0.1:8000/api/v1/assets/inspect";
 const AI_API_URL = "/api/ai/generate";
 const STORAGE_KEY = "originlab_experiments_v1";
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
+const ALLOWED_TYPES = new Set(["image/jpeg", "image/png"]);
 const MAX_BYTES = 20 * 1024 * 1024;
 const VIEWS = new Set(["home", "result", "detail", "outputs", "history", "guide", "devices", "code", "trust"]);
 const RESOURCE_VIEWS = new Set(["guide", "devices", "code", "trust"]);
@@ -84,7 +85,7 @@ function clearGeneratedImage() {
 }
 function selectFile(file) {
   if (!file) return;
-  if (!ALLOWED_TYPES.has(file.type)) { toast("JPG, PNG, WebP, AVIF 이미지만 사용할 수 있습니다."); return; }
+  if (!ALLOWED_TYPES.has(file.type)) { toast("JPG, PNG 이미지만 사용할 수 있습니다."); return; }
   if (file.size > MAX_BYTES) { toast("20 MB 이하의 이미지를 선택해 주세요."); return; }
   releaseSelectedFile();
   state.file = file;
@@ -108,19 +109,63 @@ function addRecord(record) {
   renderHistory();
   view("result");
 }
-function inspectImage() {
+async function inspectImage() {
   if (!state.file) return;
-  const record = {
-    id: makeId(), createdAt: new Date().toISOString(), name: state.file.name,
-    mime: state.file.type, size: state.file.size,
-    width: state.imageDimensions?.width || $("uploadPreview").naturalWidth || null,
-    height: state.imageDimensions?.height || $("uploadPreview").naturalHeight || null,
-    kind: "pending", status: "분석 대기", artifacts: []
-  };
-  releaseSelectedFile();
-  clearGeneratedImage();
-  addRecord(record);
-  toast("실험 기록을 만들었습니다. 원본 미리보기는 해제되었습니다.");
+
+  const file = state.file;
+  const width =
+    state.imageDimensions?.width ||
+    $("uploadPreview").naturalWidth ||
+    null;
+  const height =
+    state.imageDimensions?.height ||
+    $("uploadPreview").naturalHeight ||
+    null;
+
+  const button = $("inspectButton");
+  button.disabled = true;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const response = await fetch(INSPECT_API_URL, {
+      method: "POST",
+      body: formData,
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.detail || `HTTP ${response.status}`);
+    }
+
+    console.log("C2PA 분석 결과:", result);
+
+    const record = {
+      id: makeId(),
+      createdAt: new Date().toISOString(),
+      name: result.filename,
+      mime: result.content_type,
+      size: result.size,
+      width,
+      height,
+      kind: "analyzed",
+      status: result.manifest.validation_state || "분석 완료",
+      manifest: result.manifest,
+      artifacts: [],
+    };
+
+    releaseSelectedFile();
+    clearGeneratedImage();
+    addRecord(record);
+
+    toast("Classic C2PA 분석이 완료되었습니다.");
+  } catch (error) {
+    console.error("C2PA 분석 실패:", error);
+    toast(`분석 실패: ${error.message}`);
+    button.disabled = false;
+  }
 }
 function showSample() {
   releaseSelectedFile();
