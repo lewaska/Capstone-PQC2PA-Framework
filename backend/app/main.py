@@ -1,3 +1,4 @@
+from app.api.routes.assets import router as assets_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -5,6 +6,7 @@ app = FastAPI(
     title="PQ-C2PA Web Framework API",
     version="1.0.0",
 )
+app.include_router(assets_router, prefix="/api/v1")
 
 app.add_middleware(
     CORSMiddleware,
