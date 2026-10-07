@@ -1,0 +1,18 @@
+# 자체 서명 Root CA 인증서의 신원과 인증서 발급 권한을 정의
+
+[ req ]
+prompt = no
+distinguished_name = root_dn
+x509_extensions = root_ca_extensions
+
+[ root_dn ]
+C = KR
+O = PQ-C2PA Research
+OU = Development PKI
+CN = PQ-C2PA Development Root CA
+
+[ root_ca_extensions ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical,CA:TRUE,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
