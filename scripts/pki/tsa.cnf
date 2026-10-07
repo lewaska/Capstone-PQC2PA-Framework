@@ -1,0 +1,25 @@
+# RFC 3161 타임스탬프를 전용으로 서명할 TSA Leaf 인증서의 신원과 용도를 정의
+
+[ req ]
+prompt = no
+distinguished_name = tsa_dn
+req_extensions = tsa_request_extensions
+
+[ tsa_dn ]
+C = KR
+O = PQ-C2PA Research
+OU = Time Stamping Service
+CN = PQ-C2PA Development TSA
+
+[ tsa_request_extensions ]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,timeStamping
+subjectKeyIdentifier = hash
+
+[ tsa_certificate_extensions ]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,timeStamping
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer

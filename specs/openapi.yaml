@@ -1,0 +1,441 @@
+openapi: 3.1.0
+info:
+  title: PQ-C2PA Web Framework API
+  version: 1.0.0
+  description: Classic C2PA 이미지를 내부 PQ-C2PA로 변환하고 검증하는 API
+servers:
+  - url: /api/v1
+paths:
+  /conversions:
+    post:
+      operationId: createConversion
+      summary: Classic C2PA 이미지를 PQ-C2PA 이미지로 변환한다.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                preserve_non_c2pa_metadata:
+                  type: boolean
+                  default: true
+      responses:
+        "202":
+          description: 변환 작업 생성됨
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateConversionEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /conversions/{conversion_id}:
+    get:
+      operationId: getConversion
+      summary: 변환 상태와 완료 결과를 조회한다.
+      parameters:
+        - $ref: "#/components/parameters/ConversionId"
+      responses:
+        "200":
+          description: 변환 상태
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionEnvelope"
+        "404": { $ref: "#/components/responses/NotFound" }
+  /conversions/{conversion_id}/asset:
+    get:
+      operationId: downloadConvertedAsset
+      summary: 변환 완료된 JPEG 또는 PNG를 다운로드한다.
+      parameters:
+        - $ref: "#/components/parameters/ConversionId"
+      responses:
+        "200":
+          description: 변환된 이미지
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: 변환 미완료
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /conversions/{conversion_id}/manifest:
+    get:
+      operationId: getConversionManifest
+      summary: 생성된 PQ-C2PA manifest의 표시용 모델을 조회한다.
+      parameters:
+        - $ref: "#/components/parameters/ConversionId"
+      responses:
+        "200":
+          description: manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManifestEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /validations:
+    post:
+      operationId: createValidation
+      summary: PQ-C2PA 이미지의 독립 검증 작업을 생성한다.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: 검증 작업 생성됨
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateValidationEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /validations/{validation_id}:
+    get:
+      operationId: getValidation
+      summary: PQ-C2PA 검증 상태와 결과를 조회한다.
+      parameters:
+        - $ref: "#/components/parameters/ValidationId"
+      responses:
+        "200":
+          description: 검증 상태 또는 결과
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  parameters:
+    ConversionId:
+      name: conversion_id
+      in: path
+      required: true
+      schema: { type: string }
+    ValidationId:
+      name: validation_id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: 잘못된 요청
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    PayloadTooLarge:
+      description: 파일 크기 제한 초과
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    UnsupportedMediaType:
+      description: 지원하지 않는 이미지 형식
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    UnprocessableEntity:
+      description: 이미지 또는 C2PA를 처리할 수 없음
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: 리소스를 찾을 수 없음
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    Meta:
+      type: object
+      required: [request_id, api_version]
+      properties:
+        request_id: { type: string }
+        api_version: { type: string, const: v1 }
+    JobStatus:
+      type: string
+      enum: [QUEUED, PROCESSING, COMPLETED, FAILED, CANCELLED]
+    Stage:
+      type: string
+      enum:
+        - UPLOADED
+        - UPLOAD_VALIDATION
+        - CLASSIC_C2PA_READING
+        - ASSERTIONS_REBUILDING
+        - ASSERTIONS_HASHING
+        - ASSET_HASHING
+        - CLAIM_BUILDING
+        - CLAIM_SIGNING
+        - TIMESTAMPING
+        - MANIFEST_EMBEDDING
+        - FINAL_VALIDATION
+        - MANIFEST_READING
+        - MANIFEST_STRUCTURE_VALIDATION
+        - ASSERTION_INTEGRITY_VALIDATION
+        - ASSET_BINDING_VALIDATION
+        - CLAIM_SIGNATURE_VALIDATION
+        - SIGNER_CERTIFICATE_VALIDATION
+        - TIMESTAMP_VALIDATION
+        - TSA_CERTIFICATE_VALIDATION
+        - COMPLETED
+    TrustStatus:
+      type: string
+      enum: [TRUSTED, UNTRUSTED, INDETERMINATE]
+    CheckStatus:
+      type: string
+      enum: [VALID, INVALID, INDETERMINATE, NOT_PRESENT, NOT_APPLICABLE]
+    ApiError:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        stage:
+          oneOf:
+            - $ref: "#/components/schemas/Stage"
+            - type: "null"
+        retryable: { type: boolean }
+        details: { type: object, additionalProperties: true }
+    ErrorEnvelope:
+      type: object
+      required: [error, meta]
+      properties:
+        error: { $ref: "#/components/schemas/ApiError" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    CreateConversion:
+      type: object
+      required: [conversion_id, status, stage, progress_percent, created_at]
+      properties:
+        conversion_id: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/Stage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        created_at: { type: string, format: date-time }
+    CreateConversionEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/CreateConversion" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    ClassicC2paSummary:
+      type: object
+      required: [present, validation_status, assertion_count, warning_codes]
+      properties:
+        present: { type: boolean }
+        validation_status:
+          type: string
+          enum: [VALID, INVALID, INDETERMINATE, NOT_PRESENT]
+        active_manifest: { type: [string, "null"] }
+        claim_generator: { type: [string, "null"] }
+        assertion_count: { type: integer, minimum: 0 }
+        warning_codes:
+          type: array
+          items: { type: string }
+    SourceAsset:
+      type: object
+      required: [filename, media_type, size_bytes, file_sha3_256, classic_c2pa]
+      properties:
+        filename: { type: string }
+        media_type: { type: string, enum: [image/jpeg, image/png] }
+        size_bytes: { type: integer, minimum: 0 }
+        file_sha3_256: { type: string }
+        classic_c2pa: { $ref: "#/components/schemas/ClassicC2paSummary" }
+    ConversionResult:
+      type: object
+      required: [filename, media_type, size_bytes, file_sha3_256, manifest_id, validation_id, trust_status, manifest_url, validation_url, download_url]
+      properties:
+        filename: { type: string }
+        media_type: { type: string, enum: [image/jpeg, image/png] }
+        size_bytes: { type: integer, minimum: 0 }
+        file_sha3_256: { type: string }
+        manifest_id: { type: string }
+        validation_id: { type: string }
+        trust_status: { $ref: "#/components/schemas/TrustStatus" }
+        manifest_url: { type: string }
+        validation_url: { type: string }
+        download_url: { type: string }
+    Conversion:
+      type: object
+      required: [conversion_id, status, stage, progress_percent, created_at, updated_at]
+      properties:
+        conversion_id: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/Stage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        source:
+          oneOf:
+            - $ref: "#/components/schemas/SourceAsset"
+            - type: "null"
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/ConversionResult"
+            - type: "null"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ApiError"
+            - type: "null"
+    ConversionEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/Conversion" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    CertificateSummary:
+      type: object
+      required: [subject, issuer, serial_number, fingerprint_sha256, not_before, not_after]
+      properties:
+        subject: { type: string }
+        issuer: { type: string }
+        serial_number: { type: string }
+        fingerprint_sha256: { type: string }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+    AssertionReference:
+      type: object
+      required: [label, uri, hash_algorithm, hash]
+      properties:
+        label: { type: string }
+        uri: { type: string }
+        hash_algorithm: { type: string, const: SHA3-256 }
+        hash: { type: string }
+    Claim:
+      type: object
+      required: [label, claim_generator, format, instance_id, hash_algorithm, signature_algorithm, cose_algorithm_id, signature_uri, assertion_references]
+      properties:
+        label: { type: string, const: c2pa.claim.v2 }
+        claim_generator: { type: string }
+        format: { type: string }
+        instance_id: { type: string }
+        hash_algorithm: { type: string, const: SHA3-256 }
+        signature_algorithm: { type: string, const: ML-DSA-65 }
+        cose_algorithm_id: { type: integer, const: -49 }
+        signature_uri: { type: string }
+        assertion_references:
+          type: array
+          items: { $ref: "#/components/schemas/AssertionReference" }
+    Assertion:
+      type: object
+      required: [label, kind, data, hash_algorithm, hash]
+      properties:
+        label: { type: string }
+        kind: { type: string, enum: [ACTIONS, HARD_BINDING, INGREDIENT, METADATA, OTHER] }
+        data: { type: object, additionalProperties: true }
+        hash_algorithm: { type: string, const: SHA3-256 }
+        hash: { type: string }
+    Signature:
+      type: object
+      required: [algorithm, cose_algorithm_id, valid, signer_certificate]
+      properties:
+        algorithm: { type: string, const: ML-DSA-65 }
+        cose_algorithm_id: { type: integer, const: -49 }
+        valid: { type: boolean }
+        signer_certificate: { $ref: "#/components/schemas/CertificateSummary" }
+    Timestamp:
+      type: object
+      required: [present]
+      properties:
+        present: { type: boolean }
+        generation_time: { type: [string, "null"], format: date-time }
+        message_imprint_algorithm: { type: [string, "null"] }
+        message_imprint: { type: [string, "null"] }
+        token_serial_number: { type: [string, "null"] }
+        tsa_certificate:
+          oneOf:
+            - $ref: "#/components/schemas/CertificateSummary"
+            - type: "null"
+    Manifest:
+      type: object
+      required: [manifest_id, format, profile_version, active_manifest, claim, assertions, signature, timestamp]
+      properties:
+        manifest_id: { type: string }
+        format: { type: string, const: PQ-C2PA }
+        profile_version: { type: string }
+        active_manifest: { type: boolean }
+        claim: { $ref: "#/components/schemas/Claim" }
+        assertions:
+          type: array
+          items: { $ref: "#/components/schemas/Assertion" }
+        signature: { $ref: "#/components/schemas/Signature" }
+        timestamp: { $ref: "#/components/schemas/Timestamp" }
+    ManifestEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/Manifest" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    CreateValidation:
+      type: object
+      required: [validation_id, job_status, stage, progress_percent, created_at]
+      properties:
+        validation_id: { type: string }
+        job_status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/Stage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        created_at: { type: string, format: date-time }
+    CreateValidationEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/CreateValidation" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    ValidationCheck:
+      type: object
+      required: [name, status, code, message]
+      properties:
+        name:
+          type: string
+          enum: [MANIFEST_STRUCTURE, ASSERTION_INTEGRITY, ASSET_BINDING, CLAIM_SIGNATURE, SIGNER_CERTIFICATE_PATH, TIMESTAMP_TOKEN, TSA_CERTIFICATE_PATH]
+        status: { $ref: "#/components/schemas/CheckStatus" }
+        code: { type: string }
+        message: { type: string }
+    Validation:
+      type: object
+      required: [validation_id, job_status, stage, progress_percent]
+      properties:
+        validation_id: { type: string }
+        job_status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/Stage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        trust_status:
+          oneOf:
+            - $ref: "#/components/schemas/TrustStatus"
+            - type: "null"
+        policy_version: { type: [string, "null"] }
+        profile_version: { type: [string, "null"] }
+        validated_at: { type: [string, "null"], format: date-time }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/ValidationCheck" }
+        failures:
+          type: array
+          items: { $ref: "#/components/schemas/ApiError" }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/ApiError" }
+        manifest_url: { type: [string, "null"] }
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ApiError"
+            - type: "null"
+    ValidationEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/Validation" }
+        meta: { $ref: "#/components/schemas/Meta" }
