@@ -1,0 +1,42 @@
+{
+  "data": {
+    "conversion_id": "conv_mock_001",
+    "status": "COMPLETED",
+    "stage": "COMPLETED",
+    "progress_percent": 100,
+    "created_at": "2026-10-04T06:30:00Z",
+    "updated_at": "2026-10-04T06:30:07Z",
+    "completed_at": "2026-10-04T06:30:07Z",
+    "source": {
+      "filename": "classic-c2pa.jpg",
+      "media_type": "image/jpeg",
+      "size_bytes": 1530021,
+      "file_sha3_256": "8afc87c6f21a3bce9e28dd6128a9f53782c78bb62df845806e54100525cb77ea",
+      "classic_c2pa": {
+        "present": true,
+        "validation_status": "VALID",
+        "active_manifest": "urn:uuid:mock-classic-manifest",
+        "claim_generator": "Classic C2PA Generator/1.0",
+        "assertion_count": 3,
+        "warning_codes": []
+      }
+    },
+    "result": {
+      "filename": "classic-c2pa.pq-c2pa.jpg",
+      "media_type": "image/jpeg",
+      "size_bytes": 1548880,
+      "file_sha3_256": "26b43bba79ae502720438694e9073301cffb534e97f84cc831e83e54c6b14f22",
+      "manifest_id": "manifest_mock_001",
+      "validation_id": "val_mock_001",
+      "trust_status": "TRUSTED",
+      "manifest_url": "/api/v1/conversions/conv_mock_001/manifest",
+      "validation_url": "/api/v1/validations/val_mock_001",
+      "download_url": "/api/v1/conversions/conv_mock_001/asset"
+    },
+    "error": null
+  },
+  "meta": {
+    "request_id": "req_mock_001",
+    "api_version": "v1"
+  }
+}

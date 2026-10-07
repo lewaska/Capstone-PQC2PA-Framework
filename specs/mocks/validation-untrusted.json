@@ -1,0 +1,72 @@
+{
+  "data": {
+    "validation_id": "val_mock_002",
+    "job_status": "COMPLETED",
+    "stage": "COMPLETED",
+    "progress_percent": 100,
+    "trust_status": "UNTRUSTED",
+    "policy_version": "trust-policy-1.0",
+    "profile_version": "1.0",
+    "validated_at": "2026-10-04T06:40:03Z",
+    "checks": [
+      {
+        "name": "MANIFEST_STRUCTURE",
+        "status": "VALID",
+        "code": "OK",
+        "message": "PQ-C2PA manifest 구조가 유효합니다."
+      },
+      {
+        "name": "ASSERTION_INTEGRITY",
+        "status": "VALID",
+        "code": "OK",
+        "message": "모든 Assertion SHA3-256 해시가 일치합니다."
+      },
+      {
+        "name": "ASSET_BINDING",
+        "status": "INVALID",
+        "code": "ASSET_HASH_MISMATCH",
+        "message": "이미지 콘텐츠가 PQ-C2PA 생성 이후 변경되었습니다."
+      },
+      {
+        "name": "CLAIM_SIGNATURE",
+        "status": "VALID",
+        "code": "OK",
+        "message": "ML-DSA-65 Claim 서명이 유효합니다."
+      },
+      {
+        "name": "SIGNER_CERTIFICATE_PATH",
+        "status": "VALID",
+        "code": "OK",
+        "message": "서명자 인증서가 내부 Root CA까지 연결됩니다."
+      },
+      {
+        "name": "TIMESTAMP_TOKEN",
+        "status": "VALID",
+        "code": "OK",
+        "message": "TimestampToken과 message imprint가 유효합니다."
+      },
+      {
+        "name": "TSA_CERTIFICATE_PATH",
+        "status": "VALID",
+        "code": "OK",
+        "message": "TSA 인증서가 내부 Root CA까지 연결됩니다."
+      }
+    ],
+    "failures": [
+      {
+        "code": "ASSET_HASH_MISMATCH",
+        "message": "이미지 콘텐츠 hard binding이 일치하지 않습니다.",
+        "stage": "ASSET_BINDING_VALIDATION",
+        "retryable": false,
+        "details": {}
+      }
+    ],
+    "warnings": [],
+    "manifest_url": null,
+    "error": null
+  },
+  "meta": {
+    "request_id": "req_mock_002",
+    "api_version": "v1"
+  }
+}
