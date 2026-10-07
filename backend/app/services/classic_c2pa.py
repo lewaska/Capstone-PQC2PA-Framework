@@ -4,6 +4,10 @@ from typing import Any
 
 from c2pa import Reader
 
+# 공식 c2pa-python sdk 사용
+# classic manifest 읽고 active manifest 찾아 claim 정보를 추출합니다
+# 모든 assertion 분류
+# classic 검증 결과 보존
 
 HARD_BINDING_LABELS = {
     "c2pa.hash.data",
@@ -17,6 +21,8 @@ HARD_BINDING_LABELS = {
 class ClassicC2PAReadError(Exception):
     """Classic C2PA manifest를 읽지 못했습니다."""
 
+class ClassicC2PANotFoundError(ClassicC2PAReadError):
+    """이미지에서 C2PA Manifest를 찾지 못했습니다."""
 
 class ClassicC2PAStructureError(ClassicC2PAReadError):
     """SDK가 반환한 manifest 구조에서 Active Manifest를 찾지 못했습니다."""
@@ -29,10 +35,23 @@ def read_classic_manifest(image_path: Path) -> dict[str, Any]:
         reader = Reader(str(image_path))
         return json.loads(reader.json())
     except Exception as exc:
-        raise ClassicC2PAReadError(
-            "이미지에서 Classic C2PA manifest를 읽지 못했습니다."
-        ) from exc
+        message = str(exc)
 
+        if any(
+            value in message
+            for value in (
+                "ManifestNotFound",
+                "JumbfNotFound",
+                "no JUMBF",
+            )
+        ):
+            raise ClassicC2PANotFoundError(
+                "이미지에서 C2PA Manifest를 찾지 못했습니다."
+            ) from exc
+
+        raise ClassicC2PAReadError(
+            "이미지에서 Classic C2PA Manifest를 읽지 못했습니다."
+        ) from exc
 
 def classify_assertion(label: str) -> str:
     """표시와 변환 정책에 사용할 수 있도록 Assertion 종류를 분류합니다."""

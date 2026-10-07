@@ -239,3 +239,30 @@ main{max-width:1190px;padding-top:48px}
 .trust-statement{max-width:810px;margin:36px 0 23px}.trust-statement strong{display:block;color:#1e3655;font-size:21px;letter-spacing:-.035em}.trust-statement p{color:#71849d;font-size:13px;line-height:1.8;margin:11px 0 0}.trust-promise{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.trust-promise>div{display:flex;align-items:flex-start;flex-direction:column;padding:22px;background:#fff;border:1px solid #e1e8f2;border-radius:12px}.trust-promise svg{width:22px;height:22px;color:#346dce;margin-bottom:18px}.trust-promise strong{color:#25405f;font-size:14px}.trust-promise span{color:#8495a9;font-size:11px;line-height:1.5;margin-top:5px}.trust-note{margin:20px 0 0;padding:14px 17px;border-left:3px solid #a6bcdd;background:#f1f5fb;color:#7185a0;font-size:11px;line-height:1.7}
 @media(max-width:900px){.device-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.directory-toolbar .archive-count{width:100%;text-align:right}.guide-steps article{min-height:195px}}
 @media(max-width:600px){.resource-nav{top:76px}.resource-nav-inner{padding:0 16px;gap:21px}.resource-nav button{font-size:11px;padding:11px 1px}.resource-view{padding-top:0}.resource-hero{margin-bottom:18px}.resource-hero h1{font-size:30px}.resource-hero p{font-size:12px}.guide-callout,.directory-note{padding:14px;font-size:11px}.resource-section{margin-top:30px}.resource-heading h2{font-size:19px}.guide-steps,.principle-grid,.resource-links,.trust-promise,.device-grid{grid-template-columns:1fr}.guide-steps article{min-height:0;padding:19px}.guide-steps h3{margin-top:13px}.verdict-list{grid-template-columns:1fr}.directory-toolbar .search-field{max-width:none;min-width:100%;width:100%}.directory-filters{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px}.directory-filters button{flex:none}.device-card{padding:18px}.device-card h2{margin-top:15px}.trust-hero{padding:29px 23px}.trust-hero h1{font-size:36px}.trust-hero p{font-size:13px}.trust-statement{margin:27px 0 18px}.trust-statement strong{font-size:19px}.code-card pre{padding:17px;font-size:11px}}
+#manifestJson {
+  max-height: 36rem;
+  overflow: auto;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: #101827;
+  color: #dce8ff;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.manifest-json {
+  max-height: 36rem;
+  overflow: auto;
+  margin: 0;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: #101827;
+  color: #dce8ff;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}

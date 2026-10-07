@@ -42,9 +42,34 @@ function loadRecords() {
       size: Number.isFinite(item.size) ? item.size : 0,
       width: Number.isSafeInteger(item.width) && item.width > 0 ? item.width : null,
       height: Number.isSafeInteger(item.height) && item.height > 0 ? item.height : null,
-      kind: item.kind === "demo" ? "demo" : "pending",
-      status: item.kind === "demo" ? "시연 데이터" : "분석 대기",
-      artifacts: []
+     kind:
+  item.kind === "demo"
+    ? "demo"
+    : item.kind === "verified"
+      ? "verified"
+      : "pending",
+
+status:
+  typeof item.status === "string"
+    ? item.status
+    : item.kind === "demo"
+      ? "시연 데이터"
+      : "분석 대기",
+
+analysis:
+  item.analysis && typeof item.analysis === "object"
+    ? item.analysis
+    : null,
+
+manifest:
+  item.manifest && typeof item.manifest === "object"
+    ? item.manifest
+    : null,
+
+artifacts:
+  Array.isArray(item.artifacts)
+    ? item.artifacts
+    : []
     }));
   } catch { return []; }
 }
@@ -143,18 +168,31 @@ async function inspectImage() {
     console.log("C2PA 분석 결과:", result);
 
     const record = {
-      id: makeId(),
-      createdAt: new Date().toISOString(),
-      name: result.filename,
-      mime: result.content_type,
-      size: result.size,
-      width,
-      height,
-      kind: "analyzed",
-      status: result.manifest.validation_state || "분석 완료",
-      manifest: result.manifest,
-      artifacts: [],
-    };
+  id: makeId(),
+  createdAt: new Date().toISOString(),
+  name: result.filename || file.name,
+  mime: result.content_type || file.type,
+  size: result.size || file.size,
+  width,
+  height,
+  kind: "verified",
+  status: result.state || "Unknown",
+  analysis: {
+    hasC2pa: result.has_c2pa === true,
+    state: result.state || "Unknown",
+    activeManifest: result.active_manifest || null,
+    claim: result.claim || null,
+    assertions: Array.isArray(result.assertions)
+      ? result.assertions
+      : [],
+    validationStatus: Array.isArray(result.validation_status)
+      ? result.validation_status
+      : [],
+    validationResults: result.validation_results || null,
+  },
+  manifest: result.manifest || null,
+  artifacts: ["Classic C2PA 검증 결과"],
+};
 
     releaseSelectedFile();
     clearGeneratedImage();
@@ -223,34 +261,460 @@ async function loadFromUrl() {
 
 function renderRecord() {
   const record = currentRecord();
+
   const demo = record?.kind === "demo";
   const pending = record?.kind === "pending";
+  const verified = record?.kind === "verified";
+
+  const analysis = record?.analysis || {};
+  const claim = analysis.claim || {};
+  const signature = claim.signature_info || {};
+
+  const assertions = Array.isArray(analysis.assertions)
+    ? analysis.assertions
+    : [];
+
+  const validationStatus = Array.isArray(analysis.validationStatus)
+    ? analysis.validationStatus
+    : [];
+
+  /*
+   * validation_results 안에는 success, informational, failure 배열이
+   * 여러 단계로 들어올 수 있으므로 모든 검증 코드를 하나로 모읍니다.
+   */
+  const validationEntries = [];
+
+  function collectValidationEntries(value, kind = "") {
+    if (Array.isArray(value)) {
+      value.forEach(item => {
+        if (item && typeof item === "object") {
+          validationEntries.push({
+            ...item,
+            kind: kind || item.kind || "",
+          });
+        }
+      });
+      return;
+    }
+
+    if (!value || typeof value !== "object") return;
+
+    for (const [key, child] of Object.entries(value)) {
+      if (["success", "informational", "failure"].includes(key)) {
+        collectValidationEntries(child, key);
+      } else {
+        collectValidationEntries(child, kind);
+      }
+    }
+  }
+
+  collectValidationEntries(analysis.validationResults);
+
+  for (const item of validationStatus) {
+    validationEntries.push({
+      ...item,
+      kind: item.kind || "failure",
+    });
+  }
+
+  const validationCodes = validationEntries.map(item =>
+    String(item.code || "")
+  );
+
+  const hasCode = code =>
+    validationCodes.includes(code);
+
+  const hasCodeStartingWith = prefix =>
+    validationCodes.some(code => code.startsWith(prefix));
+
+  const hasFailureStartingWith = prefix =>
+    validationEntries.some(item =>
+      item.kind === "failure" &&
+      String(item.code || "").startsWith(prefix)
+    );
+
+  const hasDataHashMatch =
+    hasCode("assertion.dataHash.match") ||
+    hasCode("assertion.hashedURI.match");
+
+  const hasDataHashFailure =
+    hasCode("assertion.dataHash.mismatch") ||
+    hasFailureStartingWith("assertion.dataHash");
+
+  const hasSignatureValid =
+    hasCode("claimSignature.validated") ||
+    hasCode("claimSignature.insideValidity");
+
+  const hasSignatureFailure =
+    hasFailureStartingWith("claimSignature.");
+
+  const hasTimestamp =
+    Boolean(signature.time) ||
+    hasCodeStartingWith("timeStamp.");
+
+  const hasTimestampValid =
+    hasCode("timeStamp.validated");
+
+  const hasTimestampFailure =
+    hasFailureStartingWith("timeStamp.");
+
+  const hasUntrustedCredential =
+    hasCode("signingCredential.untrusted") ||
+    hasCode("timeStamp.untrusted");
+
+  const aiDeclared = assertions.some(assertion => {
+    const actions = assertion?.data?.actions;
+
+    return Array.isArray(actions) && actions.some(action => {
+      const sourceType = String(
+        action.digitalSourceType || ""
+      );
+
+      return (
+        sourceType.includes("trainedAlgorithmicMedia") ||
+        sourceType.includes(
+          "compositeWithTrainedAlgorithmicMedia"
+        ) ||
+        sourceType.includes("algorithmicallyEnhanced")
+      );
+    });
+  });
+
+  const signer =
+    signature.common_name ||
+    signature.issuer ||
+    "확인 불가";
+
+  /*
+   * 결과 배너
+   */
   $("resultBanner").classList.toggle("is-demo", demo);
-  setText("bannerLabel", demo ? "화면 예시" : "검증 상태");
-  setText("bannerTitle", demo ? "결과 화면 예시" : pending ? "분석 서버 연결 대기" : "검사 기록이 없습니다");
-  setText("bannerText", demo
-    ? "아래 값은 화면 구성을 위한 시연 데이터입니다. 실제 C2PA 검증 결과가 아닙니다."
-    : pending ? "파일 정보만 기록했습니다. 실제 C2PA 검증과 결과 파일 생성은 분석 서버 연결 후 가능합니다."
-      : "이미지를 선택하고 검사를 실행해 주세요.");
-  setText("bannerTag", demo ? "시연 데이터" : pending ? "미검증" : "대기");
-  ["resultSigner", "resultIntegrity", "resultAiFlag"].forEach(id => setText(id, demo ? "시연용" : "확인 전"));
-  setText("resultEmptyTitle", record ? "원본 미리보기 해제됨" : "결과 이미지가 없습니다");
-  setText("resultEmptyText", record ? "생성된 결과 이미지는 아직 없습니다. 업로드 원본은 보관하지 않습니다." : "이미지를 검사하면 결과 상태가 표시됩니다.");
+
+  setText(
+    "bannerLabel",
+    demo ? "화면 예시" : "검증 상태"
+  );
+
+  let bannerTitle = "검사 기록이 없습니다";
+  let bannerText = "이미지를 선택하고 검사를 실행해 주세요.";
+  let bannerTag = "대기";
+
+  if (demo) {
+    bannerTitle = "결과 화면 예시";
+    bannerText =
+      "아래 값은 화면 구성을 위한 시연 데이터입니다. 실제 검증 결과가 아닙니다.";
+    bannerTag = "시연 데이터";
+  } else if (pending) {
+    bannerTitle = "분석 서버 연결 대기";
+    bannerText =
+      "파일 정보만 기록됐으며 아직 C2PA 검증을 수행하지 않았습니다.";
+    bannerTag = "미검증";
+  } else if (verified) {
+    bannerTag = analysis.state || "Unknown";
+
+    if (analysis.state === "NoManifest") {
+      bannerTitle = "C2PA Manifest가 없습니다";
+      bannerText =
+        "파일은 정상적으로 읽었지만 이미지 내부에서 C2PA Manifest를 찾지 못했습니다.";
+    } else if (analysis.state === "Invalid") {
+      bannerTitle = "Classic C2PA 검증 실패";
+      bannerText =
+        "서명 또는 데이터 무결성 검증에서 실패 항목이 발견됐습니다. 상세 결과를 확인해 주세요.";
+    } else if (analysis.state === "Valid") {
+      bannerTitle = "서명 유효 · 신뢰 미확인";
+      bannerText =
+        "C2PA 서명과 데이터 연결은 유효하지만 서명 인증서의 신뢰 여부는 별도로 확인해야 합니다.";
+    } else if (analysis.state === "Trusted") {
+      bannerTitle = "Classic C2PA 신뢰 확인";
+      bannerText =
+        "C2PA 서명, 데이터 무결성 및 선택한 신뢰 정책의 인증서 검증을 통과했습니다.";
+    } else {
+      bannerTitle =
+        `Classic C2PA 검증 결과: ${analysis.state || "Unknown"}`;
+      bannerText =
+        "상세 화면에서 SDK가 반환한 검증 코드와 Manifest를 확인해 주세요.";
+    }
+  }
+
+  setText("bannerTitle", bannerTitle);
+  setText("bannerText", bannerText);
+  setText("bannerTag", bannerTag);
+
+  /*
+   * 핵심 결과
+   */
+  setText(
+    "resultSigner",
+    verified ? signer : demo ? "시연용" : "확인 전"
+  );
+
+  let integrityText = "확인 전";
+
+  if (demo) {
+    integrityText = "시연용";
+  } else if (verified && analysis.state === "NoManifest") {
+    integrityText = "검증 불가";
+  } else if (verified && hasDataHashFailure) {
+    integrityText = "해시 불일치";
+  } else if (verified && hasDataHashMatch) {
+    integrityText = "해시 일치";
+  } else if (verified) {
+    integrityText = "세부 결과 확인";
+  }
+
+  setText("resultIntegrity", integrityText);
+
+  setText(
+    "resultAiFlag",
+    verified
+      ? aiDeclared
+        ? "AI 생성·편집 선언 있음"
+        : "선언 확인 안 됨"
+      : demo
+        ? "시연용"
+        : "확인 전"
+  );
+
+  /*
+   * 파일 정보
+   */
+  setText(
+    "resultEmptyTitle",
+    record
+      ? "업로드 원본은 보관하지 않습니다"
+      : "결과 이미지가 없습니다"
+  );
+
+  setText(
+    "resultEmptyText",
+    record
+      ? "검증 결과와 Manifest 정보만 브라우저 기록에 저장됩니다."
+      : "이미지를 검사하면 결과 상태가 표시됩니다."
+  );
+
   setText("resultFileName", record?.name || "—");
-  setText("resultFileMeta", demo ? "화면 시연용 기록" : record?.mime ? record.mime.replace("image/", "").toUpperCase() : "선택된 파일 없음");
-  setText("resultFileSize", record ? formatSize(record.size) : "—");
-  setText("resultImageDimensions", demo ? "예시" : record?.width && record?.height ? `${record.width} × ${record.height}` : "크기 확인 전");
-  setText("detailFileName", record?.name || "선택된 파일 없음");
-  setText("detailMode", demo ? "시연 데이터 · 실제 검증 아님" : pending ? "분석 서버 연결 대기" : "분석 결과 대기");
-  setText("detailRecordMeta", record ? `${formatDate(record.createdAt)} · 기록 ID ${record.id}` : "기록 없음");
-  setText("evidenceTag", demo ? "시연 데이터" : "분석 대기");
-  const summaries = demo ? ["구조 예시", "연결 예시", "서명 예시", "신뢰 예시"] : ["확인 전", "확인 전", "확인 전", "확인 전"];
-  ["summaryManifest", "summaryClaim", "summarySignature", "summaryTimestamp"].forEach((id, index) => setText(id, summaries[index]));
-  ["evidenceManifest", "evidenceAssertion", "evidenceClaim", "evidenceSignature", "evidenceTimestamp", "evidenceTrust"]
-    .forEach(id => setText(id, demo ? "시연용" : "미실행"));
+
+  setText(
+    "resultFileMeta",
+    demo
+      ? "화면 시연용 기록"
+      : record?.mime
+        ? record.mime.replace("image/", "").toUpperCase()
+        : "선택된 파일 없음"
+  );
+
+  setText(
+    "resultFileSize",
+    record ? formatSize(record.size) : "—"
+  );
+
+  setText(
+    "resultImageDimensions",
+    demo
+      ? "예시"
+      : record?.width && record?.height
+        ? `${record.width} × ${record.height}`
+        : "크기 정보 없음"
+  );
+
+  /*
+   * 요약 항목
+   */
+  const summaryValues = demo
+    ? ["구조 예시", "연결 예시", "서명 예시", "신뢰 예시"]
+    : verified
+      ? [
+          analysis.hasC2pa ? "존재" : "없음",
+          assertions.length
+            ? `${assertions.length}개`
+            : analysis.hasC2pa
+              ? "확인되지 않음"
+              : "없음",
+          hasSignatureFailure
+            ? "검증 실패"
+            : hasSignatureValid
+              ? signature.alg || "유효"
+              : Object.keys(signature).length
+                ? signature.alg || "서명 있음"
+                : "확인 불가",
+          hasTimestampFailure
+            ? "검증 실패"
+            : hasTimestampValid
+              ? "유효"
+              : hasTimestamp
+                ? "정보 있음"
+                : "없음",
+        ]
+      : ["확인 전", "확인 전", "확인 전", "확인 전"];
+
+  [
+    "summaryManifest",
+    "summaryClaim",
+    "summarySignature",
+    "summaryTimestamp",
+  ].forEach((id, index) => {
+    setText(id, summaryValues[index]);
+  });
+
+  /*
+   * 상세 화면 상단
+   */
+  setText(
+    "detailFileName",
+    record?.name || "선택된 파일 없음"
+  );
+
+  setText(
+    "detailMode",
+    demo
+      ? "시연 데이터 · 실제 검증 아님"
+      : verified
+        ? `Classic C2PA · ${analysis.state || "Unknown"}`
+        : pending
+          ? "분석 서버 연결 대기"
+          : "분석 결과 대기"
+  );
+
+  setText(
+    "detailRecordMeta",
+    record
+      ? `${formatDate(record.createdAt)} · 기록 ID ${record.id}`
+      : "기록 없음"
+  );
+
+  setText(
+    "evidenceTag",
+    verified
+      ? analysis.state || "Unknown"
+      : demo
+        ? "시연 데이터"
+        : "분석 대기"
+  );
+
+  /*
+   * 항목별 근거
+   */
+  setText(
+    "evidenceManifest",
+    verified
+      ? analysis.hasC2pa
+        ? "확인"
+        : "없음"
+      : demo
+        ? "시연용"
+        : "미실행"
+  );
+
+  setText(
+    "evidenceAssertion",
+    verified
+      ? assertions.length
+        ? `${assertions.length}개 확인`
+        : "없음"
+      : demo
+        ? "시연용"
+        : "미실행"
+  );
+
+  setText(
+    "evidenceClaim",
+    verified
+      ? claim && Object.keys(claim).length
+        ? "확인"
+        : "없음"
+      : demo
+        ? "시연용"
+        : "미실행"
+  );
+
+  setText(
+    "evidenceSignature",
+    verified
+      ? hasSignatureFailure
+        ? "실패"
+        : hasSignatureValid
+          ? "유효"
+          : Object.keys(signature).length
+            ? "정보 있음"
+            : "확인 불가"
+      : demo
+        ? "시연용"
+        : "미실행"
+  );
+
+  setText(
+    "evidenceTimestamp",
+    verified
+      ? hasTimestampFailure
+        ? "실패"
+        : hasTimestampValid
+          ? "유효"
+          : hasTimestamp
+            ? "정보 있음"
+            : "없음"
+      : demo
+        ? "시연용"
+        : "미실행"
+  );
+
+  setText(
+    "evidenceTrust",
+    verified
+      ? hasUntrustedCredential
+        ? "신뢰 미확인"
+        : analysis.state === "Trusted"
+          ? "신뢰 확인"
+          : analysis.hasC2pa
+            ? "세부 결과 확인"
+            : "검증 불가"
+      : demo
+        ? "시연용"
+        : "미실행"
+  );
+
+  setText(
+    "checkCount",
+    verified
+      ? `${validationEntries.length}개 SDK 검증 결과`
+      : demo
+        ? "6개 항목 · 시연 데이터"
+        : "6개 항목 · 분석 대기"
+  );
+
+  /*
+   * Manifest JSON
+   */
+  const hasManifest =
+    verified &&
+    record?.manifest &&
+    typeof record.manifest === "object";
+
+  $("manifestEmpty").hidden = Boolean(hasManifest);
+  $("manifestJson").hidden = !hasManifest;
+
+  $("manifestJson").textContent = hasManifest
+    ? JSON.stringify(record.manifest, null, 2)
+    : "";
+
+  setText(
+    "manifestDataTag",
+    hasManifest
+      ? "SDK 추출 완료"
+      : verified && analysis.state === "NoManifest"
+        ? "Manifest 없음"
+        : "데이터 대기"
+  );
+
+  /*
+   * 버튼 활성화
+   */
   $("detailButton").disabled = !record;
   $("exportRecordButton").disabled = !record;
-  filterChecks($("[data-check-filter].is-active")?.dataset.checkFilter || "all");
+
+  filterChecks(
+    $("[data-check-filter].is-active")?.dataset.checkFilter ||
+      "all"
+  );
 }
 function matchesRecord(record, query) {
   if (!query) return true;

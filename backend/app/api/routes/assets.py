@@ -4,8 +4,9 @@ from tempfile import TemporaryDirectory
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.services.classic_c2pa import (
+    ClassicC2PANotFoundError,
     ClassicC2PAReadError,
-    read_classic_manifest,
+    read_and_parse_classic_manifest,
 )
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -37,24 +38,65 @@ async def inspect_asset(file: UploadFile = File(...)) -> dict:
         )
 
     if suffix == ".jpg" and not content.startswith(b"\xff\xd8\xff"):
-        raise HTTPException(status_code=400, detail="올바른 JPEG 파일이 아닙니다.")
+        raise HTTPException(
+            status_code=400,
+            detail="올바른 JPEG 파일이 아닙니다.",
+        )
 
     if suffix == ".png" and not content.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise HTTPException(status_code=400, detail="올바른 PNG 파일이 아닙니다.")
+        raise HTTPException(
+            status_code=400,
+            detail="올바른 PNG 파일이 아닙니다.",
+        )
 
     with TemporaryDirectory() as temp_dir:
         image_path = Path(temp_dir) / f"upload{suffix}"
         image_path.write_bytes(content)
 
         try:
-            manifest = read_classic_manifest(image_path)
-        except ClassicC2PAReadError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            parsed = read_and_parse_classic_manifest(image_path)
 
-    return {
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "size": len(content),
-        "has_c2pa": True,
-        "manifest": manifest,
-    }
+        except ClassicC2PANotFoundError:
+            return {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "size": len(content),
+                "has_c2pa": False,
+                "state": "NoManifest",
+                "active_manifest": None,
+                "claim": None,
+                "assertions": [],
+                "assertion_count": 0,
+                "validation_status": [],
+                "validation_results": None,
+                "manifest": None,
+            }
+
+        except ClassicC2PAReadError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=str(exc),
+            ) from exc
+
+        manifest_store = parsed["raw_manifest_store"]
+
+        return {
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size": len(content),
+            "has_c2pa": True,
+            "state": manifest_store.get(
+                "validation_state",
+                "Unknown",
+            ),
+            "active_manifest": parsed["active_manifest"],
+            "claim": parsed["claim"],
+            "assertions": parsed["assertions"],
+            "assertion_count": parsed["assertion_count"],
+            "required_assertions_observed": parsed[
+                "required_assertions_observed"
+            ],
+            "validation_status": parsed["validation_status"],
+            "validation_results": parsed["validation_results"],
+            "manifest": manifest_store,
+        }
