@@ -28,7 +28,7 @@ Ultimately, the project will provide an end-to-end web environment in which user
 ## Role
 
 - Frontend: Daegyu
-- Backend: mainly Sieun
+- Backend: Sieun / Sumin
 - Server: Sumin 
 - Content Provenance: C2PA
 - Algorithms: ML-DSA, SHA-3
