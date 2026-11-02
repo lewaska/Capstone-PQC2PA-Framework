@@ -1,12 +1,20 @@
+from pathlib import Path
+
+from app.api.routes.ai import router as ai_router
+from app.api.routes.tsa import router as tsa_router
+
 from app.api.routes.assets import router as assets_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
     title="PQ-C2PA Web Framework API",
     version="1.0.0",
 )
+app.include_router(ai_router, prefix="/api/v1")
 app.include_router(assets_router, prefix="/api/v1")
+app.include_router(tsa_router, prefix="/api/v1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,3 +32,14 @@ def health():
         "api_version": "v1",
         "pq_core_mode": "mock",
     }
+
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+
+app.mount(
+    "/",
+    StaticFiles(
+        directory=str(FRONTEND_DIR),
+        html=True,
+    ),
+    name="frontend",
+)

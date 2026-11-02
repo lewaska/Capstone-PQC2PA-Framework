@@ -1,5 +1,10 @@
 # PQ-C2PA Web Framework API Contract v1
 
+> **Deprecated:** 단일 PQ-C2PA 변환 및 custom assertion 설계를 전제로 한
+> 이전 계약이다. 현재 프런트엔드 계약은
+> [`pq-c2pa-api-contract-v2.md`](pq-c2pa-api-contract-v2.md)와
+> [`openapi-v2.yaml`](openapi-v2.yaml)을 사용한다.
+
 이 문서는 프런트엔드와 백엔드 사이의 고정 인터페이스다. 실제 코어가 완성되기 전에는 같은 형식의 Mock JSON을 사용한다.
 
 ## 1. 기본 규칙
@@ -10,7 +15,7 @@
 - 시간: UTC RFC 3339 문자열(예: `2026-10-04T06:30:00Z`)
 - ID는 문자열이며 프런트에서 내부 형식을 해석하지 않는다.
 - 이미지 입력은 1차 버전에서 `image/jpeg`, `image/png`만 허용한다.
-- 성공한 변환 결과는 기존 Classic C2PA manifest만 제거하고 단일 PQ-C2PA manifest를 삽입한다. EXIF, 일반 XMP, IPTC, ICC 등 다른 metadata는 유지한다.
+- 기존 Classic C2PA manifest를 제거하거나 단일 PQ-C2PA manifest로 교체하지 않는다.
 - HTTP 상태와 도메인 상태는 구분한다. HTTP 200이어도 검증 결과는 `UNTRUSTED`일 수 있다.
 
 ## 2. 공통 응답 형태

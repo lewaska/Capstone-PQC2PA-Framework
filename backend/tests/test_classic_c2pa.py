@@ -10,6 +10,7 @@ from app.services.classic_c2pa import (
 def test_classify_assertion() -> None:
     assert classify_assertion("c2pa.actions.v2") == "ACTIONS"
     assert classify_assertion("c2pa.hash.boxes") == "HARD_BINDING"
+    assert classify_assertion("c2pa.soft-binding") == "SOFT_BINDING"
     assert classify_assertion("c2pa.ingredient.v3__1") == "INGREDIENT"
     assert classify_assertion("example.custom") == "OTHER"
 
