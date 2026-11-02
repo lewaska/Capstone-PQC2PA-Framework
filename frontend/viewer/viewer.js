@@ -6,7 +6,8 @@ const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp
 const sizes = size => Number.isFinite(size) ? size >= 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB` : "—";
 const when = value => { const d = new Date(value); return value && !Number.isNaN(d.getTime()) ? new Intl.DateTimeFormat("ko-KR", {dateStyle:"medium", timeStyle:"short"}).format(d) : "정보 없음"; };
 const FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png","webp","tif","tiff","avif","heic","heif","gif","svg","dng","mp4","mov","avi","mp3","wav","m4a","pdf","c2pa"]);
-const MAX_SIZE = 500 * 1024 * 1024;
+const SERVER_FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png"]);
+const SERVER_MAX_SIZE = 20 * 1024 * 1024;
 const BROWSER_MAX_SIZE = 100 * 1024 * 1024;
 const state = { results:[], active:0, detail:"overview", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:false, explainAvailable:null, explainError:"" };
 const stateLabels = {Trusted:"신뢰 확인", Valid:"유효 · 신뢰 미확인", Invalid:"검증 실패", NoManifest:"C2PA 없음", RemoteUnavailable:"외부 Manifest 필요", Error:"분석 오류", Unknown:"상태 미확인"};
@@ -130,7 +131,9 @@ function updateProcessingMode() {
   if (browser) $("#private-mode").checked = true;
   $("#private-mode").disabled = browser || state.busy;
   $("#browser-mode").disabled = state.mode === "url" || state.busy;
-  $("#intake-limit").textContent = `한 번에 최대 10개 · 파일당 최대 ${browser ? 100 : 500} MB`;
+  $("#intake-limit").textContent = browser
+    ? "한 번에 최대 10개 · 파일당 최대 100 MB"
+    : "한 번에 최대 10개 · JPEG/PNG · 파일당 최대 20 MB";
   $("#header-privacy").innerHTML = browser ? '<span aria-hidden="true">♧</span> 파일은 브라우저에서만 처리됩니다' : '<span aria-hidden="true">♧</span> 브라우저 검증 모드를 선택할 수 있습니다';
   $("#privacy-note").textContent = browser
     ? "공식 C2PA 웹 SDK가 브라우저에서 파일을 검사합니다. 서버 전송·보고서 저장 없이 결과를 이 화면에서만 보여줍니다. URL 검증에는 서버 모드를 사용하세요."
@@ -153,6 +156,59 @@ async function responseJSON(response) {
   if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.error?.message || `요청 실패 (${response.status})`);
   return body;
 }
+function checksFromInspect(store, raw) {
+  const checks = [];
+  function visit(value, scope = "activeManifest") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    for (const kind of ["success", "informational", "failure"])
+      for (const entry of value[kind] || []) checks.push({...entry, kind, scope});
+    for (const [key, child] of Object.entries(value)) {
+      if (["success", "informational", "failure"].includes(key)) continue;
+      if (Array.isArray(child)) child.forEach(item => visit(item, key));
+      else visit(child, key);
+    }
+  }
+  visit(raw.validation_results || store.validation_results || {});
+  for (const entry of raw.validation_status || store.validation_status || [])
+    if (!checks.some(item => item.code === entry.code && item.url === entry.url))
+      checks.push({...entry, kind:"failure", scope:"legacy"});
+  return checks;
+}
+function normalizeInspectResult(raw, file, trustProfile, elapsedMs) {
+  const store = raw.manifest || {};
+  const manifests = store.manifests || {};
+  const active = manifests[store.active_manifest] || {};
+  const resultId = globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const actions = [];
+  for (const assertion of active.assertions || [])
+    if (assertion.label?.startsWith("c2pa.actions")) actions.push(...(assertion.data?.actions || []));
+  const aiDeclared = actions.some(action => /trainedAlgorithmicMedia|compositeWithTrainedAlgorithmicMedia|algorithmicallyEnhanced$/.test(action.digitalSourceType || ""));
+  return {
+    ...raw,
+    id:`server_${resultId.replaceAll("-", "")}`,
+    created_at:new Date().toISOString(),
+    filename:raw.filename || file.name || "asset",
+    size:raw.size ?? file.size,
+    mime:raw.content_type || file.type || "",
+    trust_profile:trustProfile,
+    report_saved:false,
+    processing_mode:"server",
+    state:raw.state || "Unknown",
+    store,
+    checks:checksFromInspect(store, raw),
+    signature:active.signature_info || raw.claim?.signature_info || {},
+    software:active.claim_generator_info || raw.claim?.claim_generator_info || [],
+    ingredients:active.ingredients || [],
+    actions,
+    ai:aiDeclared ? "declared" : "unknown",
+    manifest_count:Object.keys(manifests).length,
+    embedded:Boolean(raw.has_c2pa),
+    thumbnail:null,
+    manifest_thumbnails:{},
+    network_policy:{remote_manifests:false, ocsp:false},
+    elapsed_ms:elapsedMs
+  };
+}
 function addResult(result, file) {
   if (file) state.localUrls.set(result.id, URL.createObjectURL(file));
   state.results.push(result); state.active = state.results.length - 1;
@@ -172,9 +228,11 @@ async function verifyFiles(files) {
       progress(`${index + 1}/${list.length} · ${file.name}의 서명과 출처를 확인하고 있습니다.`);
       logActivity(`${file.name} · ${$("#browser-mode").checked ? "브라우저" : "서버"} 검증 중`);
       const suffix = file.name.split(".").pop()?.toLowerCase();
-      if (!FORMAT_EXTENSIONS.has(suffix)) { failures.push(`${file.name}: 지원하지 않는 형식입니다.`); logActivity(`${file.name} · 지원하지 않는 형식`); continue; }
       const browser = $("#browser-mode").checked;
-      if (file.size > (browser ? BROWSER_MAX_SIZE : MAX_SIZE)) { failures.push(`${file.name}: ${browser ? 100 : 500} MB 이하만 허용합니다.`); logActivity(`${file.name} · 크기 제한 초과`); continue; }
+      const allowedExtensions = browser ? FORMAT_EXTENSIONS : SERVER_FORMAT_EXTENSIONS;
+      const maxSize = browser ? BROWSER_MAX_SIZE : SERVER_MAX_SIZE;
+      if (!allowedExtensions.has(suffix)) { failures.push(`${file.name}: ${browser ? "지원하지 않는 형식" : "서버 검증은 JPEG/PNG만 지원"}입니다.`); logActivity(`${file.name} · 지원하지 않는 형식`); continue; }
+      if (file.size > maxSize) { failures.push(`${file.name}: ${browser ? 100 : 20} MB 이하만 허용합니다.`); logActivity(`${file.name} · 크기 제한 초과`); continue; }
       try {
         let result;
         if (browser) {
@@ -182,9 +240,9 @@ async function verifyFiles(files) {
           result = await verifyBrowserAsset(file, $("#trust-profile").value);
         } else {
           const body = new FormData(); body.append("file", file, file.name);
-          body.append("trust_profile", $("#trust-profile").value);
-          body.append("save_report", String(!$("#private-mode").checked));
-          result = await responseJSON(await fetch("/engine/api/verify", {method:"POST", body}));
+          const started = performance.now();
+          const inspected = await responseJSON(await fetch("/api/v1/assets/inspect", {method:"POST", body}));
+          result = normalizeInspectResult(inspected, file, $("#trust-profile").value, Math.round(performance.now() - started));
         }
         addResult(result, file);
         logActivity(`${file.name} · ${stateLabels[result.state] || result.state} · ${result.elapsed_ms || 0} ms`);
