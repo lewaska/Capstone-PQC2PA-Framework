@@ -9,7 +9,7 @@ const FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png","webp","tif","tiff","avif"
 const SERVER_FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png"]);
 const SERVER_MAX_SIZE = 20 * 1024 * 1024;
 const BROWSER_MAX_SIZE = 100 * 1024 * 1024;
-const state = { results:[], active:0, detail:"overview", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:false, explainAvailable:null, explainError:"" };
+const state = { results:[], active:0, detail:"overview", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:false, explainError:"" };
 const stateLabels = {Trusted:"신뢰 확인", Valid:"유효 · 신뢰 미확인", Invalid:"검증 실패", NoManifest:"C2PA 없음", RemoteUnavailable:"외부 Manifest 필요", Error:"분석 오류", Unknown:"상태 미확인"};
 const stateDescriptions = {
   Trusted:"서명과 파일 결합이 검증되고, 선택한 신뢰 목록에서 서명자를 확인했습니다.",
@@ -378,29 +378,31 @@ function renderAiPanel(item) {
   const simple=state.explanations.get(explanationKey(item,"simple")) || localExplanation(item,"simple");
   const detail=state.explanations.get(explanationKey(item,"detail")) || localExplanation(item,"detail");
   const output=state.explainMode === "detail" ? detail : simple;
-  const availability=state.explainAvailable === true ? "AI가 검증 상태와 검사 코드만 받아 설명합니다. 파일과 원본 메타데이터는 보내지 않습니다." : "지금은 검증 결과를 바탕으로 만든 기본 설명을 제공합니다. AI 설명은 서버 API 키가 연결되면 이용할 수 있습니다.";
-  $("#ai-explanation").innerHTML=`<div class="ai-explanation-head"><div><span class="ai-sparkle">✦</span><strong>AI 결과 보고서</strong><p>${esc(availability)}</p></div><div class="ai-explanation-actions"><button type="button" data-explain="simple" aria-pressed="${state.explainMode === "simple"}" ${state.explainBusy ? "disabled" : ""}>핵심 요약</button><button type="button" data-explain="detail" aria-pressed="${state.explainMode === "detail"}" ${state.explainBusy ? "disabled" : ""}>자세히 설명</button></div></div>${state.explainError ? `<p class="ai-explanation-error" role="alert">${esc(state.explainError)}</p>` : ""}${state.explainBusy ? `<p class="ai-explanation-wait" role="status">결과를 쉬운 말로 바꾸는 중…</p>` : ""}${output ? `<div class="ai-explanation-output"><span>${output.source === "ai" ? "AI가 작성한 설명" : "검증 결과 기본 해설"} · ${state.explainMode === "detail" ? "자세히" : "요약"}</span><h4>${esc(output.summary)}</h4><p><b>무슨 뜻인가요?</b> ${esc(output.meaning)}</p><p><b>다음에는?</b> ${esc(output.next_step)}</p><small>${esc(output.limit)}</small></div>` : ""}`;
-}
-async function checkExplainAvailability(){
-  try {const health=await responseJSON(await fetch("/engine/api/health",{cache:"no-store"}));state.explainAvailable=health.ai_explanation === true;}
-  catch {state.explainAvailable=false;}
-  if(result())renderAiPanel(result());
+  const availability="핵심 요약 또는 자세히 설명을 누르면 AI 설명을 생성합니다. 검증 상태와 검사 코드만 서버로 보내며 파일과 원본 메타데이터는 보내지 않습니다.";
+  const outputBody=output.source === "ai"
+    ? `<p style="white-space:pre-wrap">${esc(output.summary)}</p>`
+    : `<h4>${esc(output.summary)}</h4><p><b>무슨 뜻인가요?</b> ${esc(output.meaning)}</p><p><b>다음에는?</b> ${esc(output.next_step)}</p>`;
+  $("#ai-explanation").innerHTML=`<div class="ai-explanation-head"><div><span class="ai-sparkle">✦</span><strong>AI 결과 보고서</strong><p>${esc(availability)}</p></div><div class="ai-explanation-actions"><button type="button" data-explain="simple" aria-pressed="${state.explainMode === "simple"}" ${state.explainBusy ? "disabled" : ""}>핵심 요약</button><button type="button" data-explain="detail" aria-pressed="${state.explainMode === "detail"}" ${state.explainBusy ? "disabled" : ""}>자세히 설명</button></div></div>${state.explainError ? `<p class="ai-explanation-error" role="alert">${esc(state.explainError)}</p>` : ""}${state.explainBusy ? `<p class="ai-explanation-wait" role="status">결과를 쉬운 말로 바꾸는 중…</p>` : ""}<div class="ai-explanation-output"><span>${output.source === "ai" ? "AI가 작성한 설명" : "검증 결과 기본 해설"} · ${state.explainMode === "detail" ? "자세히" : "요약"}</span>${outputBody}<small>${esc(output.limit)}</small></div>`;
 }
 async function explainCurrent(mode){
   const item=result();if(!item || state.explainBusy)return;
   state.explainMode=mode;
+  state.explainError="";
   const key=explanationKey(item,mode);
   const cached=state.explanations.get(key);
-  if(cached && (cached.source === "ai" || state.explainAvailable !== true)){renderAiPanel(item);return;}
-  if(state.explainAvailable !== true){state.explanations.set(key,localExplanation(item,mode));renderAiPanel(item);return;}
+  if(cached?.source === "ai"){renderAiPanel(item);return;}
   state.explainBusy=true;state.explainError="";renderAiPanel(item);
   try {
     const checks=(item.checks || []).slice(0,20).filter(check=>["success","failure","informational"].includes(check.kind))
       .map(check=>({kind:check.kind,code:String(check.code || "").replace(/[^A-Za-z0-9_.:-]/g,"").slice(0,100)}));
-    const payload={mode,state:stateLabels[item.state] ? item.state : "Unknown",manifest_count:Math.min(1000,Math.max(0,Number(item.manifest_count || 0))),ai_declaration:item.ai === "declared" ? "declared" : item.ai === "not_declared" ? "not_declared" : "unknown",checks};
-    const explanation=await responseJSON(await fetch("/engine/api/explain",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}));
-    state.explanations.set(key,explanation);
-  } catch(cause){state.explanations.set(key,localExplanation(item,mode));state.explainError="AI 연결이 되지 않아 기본 설명을 표시했습니다.";}
+    const report={state:stateLabels[item.state] ? item.state : "Unknown",manifest_count:Math.min(1000,Math.max(0,Number(item.manifest_count || 0))),ai_declaration:item.ai === "declared" ? "declared" : item.ai === "not_declared" ? "not_declared" : "unknown",checks};
+    if(item.processing_mode === "server")report.trust_scope="FRAMEWORK_LOCAL";
+    const payload={audience:mode === "detail" ? "researcher" : "general",report};
+    const response=await responseJSON(await fetch("/api/v1/ai/summaries",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}));
+    const summary=response.data?.summary;
+    if(typeof summary !== "string" || !summary.trim())throw new Error("서버가 비어 있는 AI 요약을 반환했습니다.");
+    state.explanations.set(key,{mode,source:"ai",summary:summary.trim(),limit:localExplanation(item,mode).limit});
+  } catch(cause){state.explanations.set(key,localExplanation(item,mode));state.explainError=`${cause.message || "AI 요약 요청에 실패했습니다."} 기본 해설을 표시합니다. 버튼을 눌러 다시 시도할 수 있습니다.`;}
   finally {state.explainBusy=false;if(result())renderAiPanel(result());}
 }
 function renderActions(item) {
@@ -814,4 +816,3 @@ $("#ai-verify").addEventListener("click",()=>{
   closeAiDialog();navigatePage("verify");verifyFiles([file]);
 });
 window.addEventListener("beforeunload",()=>{if(aiState.url)URL.revokeObjectURL(aiState.url);});
-checkExplainAvailability();
