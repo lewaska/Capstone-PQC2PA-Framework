@@ -6,15 +6,14 @@ const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp
 const sizes = size => Number.isFinite(size) ? size >= 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB` : "—";
 const when = value => { const d = new Date(value); return value && !Number.isNaN(d.getTime()) ? new Intl.DateTimeFormat("ko-KR", {dateStyle:"medium", timeStyle:"short"}).format(d) : "정보 없음"; };
 const FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png","webp","tif","tiff","avif","heic","heif","gif","svg","dng","mp4","mov","avi","mp3","wav","m4a","pdf","c2pa"]);
-const SERVER_FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png"]);
-const SERVER_MAX_SIZE = 20 * 1024 * 1024;
+const SERVER_MAX_SIZE = 500 * 1024 * 1024;
 const BROWSER_MAX_SIZE = 100 * 1024 * 1024;
-const state = { results:[], active:0, detail:"overview", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:false, explainError:"" };
+const state = { results:[], active:0, detail:"overview", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:"", explainErrors:new Map() };
 const stateLabels = {Trusted:"신뢰 확인", Valid:"유효 · 신뢰 미확인", Invalid:"검증 실패", NoManifest:"C2PA 없음", RemoteUnavailable:"외부 Manifest 필요", Error:"분석 오류", Unknown:"상태 미확인"};
 const stateDescriptions = {
   Trusted:"서명과 파일 결합이 검증되고, 선택한 신뢰 목록에서 서명자를 확인했습니다.",
   Valid:"서명과 파일 결합은 유효하지만, 선택한 목록에서 서명자의 신뢰는 확인되지 않았습니다.",
-  Invalid:"Manifest 검증에 실패했습니다. 아래 오류 코드를 확인해 원인을 구분하세요.",
+  Invalid:"Manifest 검증에 실패했습니다. 검사 상세에서 실패 항목을 확인해 원인을 구분하세요.",
   NoManifest:"파일에 검증 가능한 C2PA Manifest가 없습니다. 이 결과만으로 가짜나 변조라고 판단할 수 없습니다.",
   RemoteUnavailable:"외부 Manifest가 필요하지만 현재 검증 정책에서는 원격 Manifest 요청을 차단합니다.",
   Error:"파일을 분석하는 동안 오류가 발생했습니다. 원본 파일과 형식을 확인하세요."
@@ -68,7 +67,7 @@ const glossary = {
   "active_manifest":"현재 파일에 직접 연결된 출처 기록의 식별자입니다. 다른 기록은 제작 과정의 이전 단계일 수 있습니다.",
   "validation_state":"공식 SDK가 이 파일의 출처 기록을 검사해 분류한 상태입니다. 신뢰 정책에 따라 판정이 달라질 수 있습니다."
 };
-function hintText(label,description){return `<span class="term" tabindex="0" data-description="${esc(description)}" aria-label="${esc(label)}: ${esc(description)}">${esc(label)}<span class="term-help" aria-hidden="true">?</span></span>`;}
+function hintText(label,description){return `<span class="term" tabindex="0" data-description="${esc(description)}" aria-label="${esc(label)}: ${esc(description)}">${esc(label)}</span>`;}
 function term(label) {
   const description=glossary[label];
   return description ? hintText(label,description) : esc(label);
@@ -92,7 +91,7 @@ function showGlossaryPopover(element){
 }
 function hideGlossaryPopover(){activeTerm=null;if(glossaryPopover)glossaryPopover.hidden=true;}
 document.addEventListener("pointerover",event=>{const element=event.target.closest?.(".term");if(element)showGlossaryPopover(element);});
-document.addEventListener("pointerout",event=>{const element=event.target.closest?.(".term");if(element === activeTerm && !element.contains(event.relatedTarget))hideGlossaryPopover();});
+document.addEventListener("pointerout",event=>{const element=event.target.closest?.(".term");if(element && element === activeTerm && !element.contains(event.relatedTarget))hideGlossaryPopover();});
 document.addEventListener("focusin",event=>{const element=event.target.closest?.(".term");if(element)showGlossaryPopover(element);});
 document.addEventListener("focusout",event=>{if(event.target === activeTerm)hideGlossaryPopover();});
 document.addEventListener("scroll",positionGlossaryPopover,true);
@@ -133,7 +132,7 @@ function updateProcessingMode() {
   $("#browser-mode").disabled = state.mode === "url" || state.busy;
   $("#intake-limit").textContent = browser
     ? "한 번에 최대 10개 · 파일당 최대 100 MB"
-    : "한 번에 최대 10개 · JPEG/PNG · 파일당 최대 20 MB";
+    : "한 번에 최대 10개 · 파일당 최대 500 MB";
   $("#header-privacy").innerHTML = browser ? '<span aria-hidden="true">♧</span> 파일은 브라우저에서만 처리됩니다' : '<span aria-hidden="true">♧</span> 브라우저 검증 모드를 선택할 수 있습니다';
   $("#privacy-note").textContent = browser
     ? "공식 C2PA 웹 SDK가 브라우저에서 파일을 검사합니다. 서버 전송·보고서 저장 없이 결과를 이 화면에서만 보여줍니다. URL 검증에는 서버 모드를 사용하세요."
@@ -175,7 +174,8 @@ function checksFromInspect(store, raw) {
   return checks;
 }
 function normalizeInspectResult(raw, file, trustProfile, elapsedMs) {
-  const store = raw.manifest || {};
+  raw = raw.data || raw;
+  const store = raw.manifest || raw.store || {};
   const manifests = store.manifests || {};
   const active = manifests[store.active_manifest] || {};
   const resultId = globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -185,28 +185,28 @@ function normalizeInspectResult(raw, file, trustProfile, elapsedMs) {
   const aiDeclared = actions.some(action => /trainedAlgorithmicMedia|compositeWithTrainedAlgorithmicMedia|algorithmicallyEnhanced$/.test(action.digitalSourceType || ""));
   return {
     ...raw,
-    id:`server_${resultId.replaceAll("-", "")}`,
-    created_at:new Date().toISOString(),
+    id:raw.id || `server_${resultId.replaceAll("-", "")}`,
+    created_at:raw.created_at || new Date().toISOString(),
     filename:raw.filename || file.name || "asset",
     size:raw.size ?? file.size,
-    mime:raw.content_type || file.type || "",
-    trust_profile:trustProfile,
-    report_saved:false,
+    mime:raw.content_type || raw.mime || file.type || "",
+    trust_profile:raw.trust_profile || trustProfile,
+    report_saved:raw.report_saved === true,
     processing_mode:"server",
     state:raw.state || "Unknown",
     store,
-    checks:checksFromInspect(store, raw),
-    signature:active.signature_info || raw.claim?.signature_info || {},
-    software:active.claim_generator_info || raw.claim?.claim_generator_info || [],
-    ingredients:active.ingredients || [],
-    actions,
-    ai:aiDeclared ? "declared" : "unknown",
+    checks:Array.isArray(raw.checks) ? raw.checks : checksFromInspect(store, raw),
+    signature:raw.signature || active.signature_info || raw.claim?.signature_info || {},
+    software:raw.software || active.claim_generator_info || raw.claim?.claim_generator_info || [],
+    ingredients:raw.ingredients || active.ingredients || [],
+    actions:raw.actions || actions,
+    ai:raw.ai || (aiDeclared ? "declared" : "unknown"),
     manifest_count:Object.keys(manifests).length,
-    embedded:Boolean(raw.has_c2pa),
-    thumbnail:null,
-    manifest_thumbnails:{},
-    network_policy:{remote_manifests:false, ocsp:false},
-    elapsed_ms:elapsedMs
+    embedded:raw.embedded ?? Boolean(raw.has_c2pa),
+    thumbnail:raw.thumbnail || null,
+    manifest_thumbnails:raw.manifest_thumbnails || {},
+    network_policy:raw.network_policy || {remote_manifests:false, ocsp:false},
+    elapsed_ms:raw.elapsed_ms ?? elapsedMs
   };
 }
 function addResult(result, file) {
@@ -229,10 +229,9 @@ async function verifyFiles(files) {
       logActivity(`${file.name} · ${$("#browser-mode").checked ? "브라우저" : "서버"} 검증 중`);
       const suffix = file.name.split(".").pop()?.toLowerCase();
       const browser = $("#browser-mode").checked;
-      const allowedExtensions = browser ? FORMAT_EXTENSIONS : SERVER_FORMAT_EXTENSIONS;
       const maxSize = browser ? BROWSER_MAX_SIZE : SERVER_MAX_SIZE;
-      if (!allowedExtensions.has(suffix)) { failures.push(`${file.name}: ${browser ? "지원하지 않는 형식" : "서버 검증은 JPEG/PNG만 지원"}입니다.`); logActivity(`${file.name} · 지원하지 않는 형식`); continue; }
-      if (file.size > maxSize) { failures.push(`${file.name}: ${browser ? 100 : 20} MB 이하만 허용합니다.`); logActivity(`${file.name} · 크기 제한 초과`); continue; }
+      if (!FORMAT_EXTENSIONS.has(suffix)) { failures.push(`${file.name}: 지원하지 않는 형식입니다.`); logActivity(`${file.name} · 지원하지 않는 형식`); continue; }
+      if (file.size > maxSize) { failures.push(`${file.name}: ${browser ? 100 : 500} MB 이하만 허용합니다.`); logActivity(`${file.name} · 크기 제한 초과`); continue; }
       try {
         let result;
         if (browser) {
@@ -240,6 +239,8 @@ async function verifyFiles(files) {
           result = await verifyBrowserAsset(file, $("#trust-profile").value);
         } else {
           const body = new FormData(); body.append("file", file, file.name);
+          body.append("trust_profile", $("#trust-profile").value);
+          body.append("save_report", String(!$("#private-mode").checked));
           const started = performance.now();
           const inspected = await responseJSON(await fetch("/api/v1/assets/inspect", {method:"POST", body}));
           result = normalizeInspectResult(inspected, file, $("#trust-profile").value, Math.round(performance.now() - started));
@@ -298,6 +299,7 @@ async function verifySample(sample) {
     }
     const params = new URLSearchParams({trust_profile:"lab", save_report:String(!$("#private-mode").checked)});
     const result = await responseJSON(await fetch(`/engine/api/samples/${encodeURIComponent(sample)}/verify?${params}`, {method:"POST"}));
+    result.sample_id = sample;
     addResult(result);
     logActivity(`${result.filename} · ${stateLabels[result.state] || result.state}`);
   } catch (cause) { error(cause.message); logActivity(`분석 오류 · ${cause.message}`); }
@@ -317,6 +319,43 @@ function counts(item) {
     informational:checks.filter(c => c.kind === "informational").length,
     failure:checks.filter(c => c.kind === "failure").length};
 }
+// Trust-list availability is distinct from a failed signature or content hash.
+// Preserve SDK kinds and codes in the original record and expose them in details.
+function checkPresentation(check) {
+  const code=check.code || "";
+  const trustOnly=["signingCredential.untrusted","timeStamp.untrusted"].includes(code) && check.kind !== "success";
+  const tone=trustOnly ? "warning" : check.kind === "failure" ? "failure" : check.kind === "success" ? "success" : "informational";
+  const [label,icon]={success:["통과","✓"],failure:["실패","×"],warning:["신뢰 미확인","!"],informational:["안내","i"]}[tone];
+  const titles={
+    "claimSignature.validated":"출처 기록의 서명 검증", "claimSignature.mismatch":"출처 기록의 서명 검증",
+    "claimSignature.insideValidity":"인증서 유효기간 확인", "claimSignature.outsideValidity":"인증서 유효기간 확인",
+    "assertion.hashedURI.match":"출처 기록 간 연결 확인", "assertion.hashedURI.mismatch":"출처 기록 간 연결 확인",
+    "assertion.dataHash.match":"파일과 출처 기록의 일치 확인", "assertion.dataHash.mismatch":"파일과 출처 기록의 일치 확인",
+    "assertion.bmffHash.match":"미디어와 출처 기록의 일치 확인", "assertion.bmffHash.mismatch":"미디어와 출처 기록의 일치 확인",
+    "signingCredential.trusted":"서명자 신뢰 확인", "signingCredential.untrusted":"서명자 신뢰 확인",
+    "signingCredential.ocsp.skipped":"인증서 취소 여부 조회", "timeStamp.validated":"타임스탬프 검증", "timeStamp.untrusted":"타임스탬프 발급기관 신뢰 확인"
+  };
+  const descriptions={
+    "claimSignature.validated":"출처 기록의 전자서명이 올바르게 검증되었습니다.",
+    "claimSignature.mismatch":"출처 기록의 전자서명이 일치하지 않습니다. 서명된 기록이나 서명이 변경됐을 수 있습니다.",
+    "claimSignature.insideValidity":"서명 검증에 사용된 시점이 인증서의 유효기간 안에 있습니다.",
+    "claimSignature.outsideValidity":"서명 검증에 사용된 시점이 인증서의 유효기간 밖에 있습니다.",
+    "assertion.hashedURI.match":"출처 기록이 참조하는 데이터의 해시값이 일치합니다.",
+    "assertion.hashedURI.mismatch":"출처 기록이 참조하는 데이터의 해시값이 일치하지 않습니다.",
+    "assertion.dataHash.match":"파일 내용이 출처 기록에 저장된 해시값과 일치합니다.",
+    "assertion.dataHash.mismatch":"파일 내용이 출처 기록에 저장된 해시값과 다릅니다. 서명 이후 변경됐을 수 있습니다.",
+    "signingCredential.trusted":"선택한 신뢰 목록에서 서명자의 인증서 경로를 확인했습니다.",
+    "signingCredential.ocsp.skipped":"인증서 취소 여부를 외부 서버에 조회하지 않았습니다. 통과한 검사에 포함하지 않습니다.",
+    "timeStamp.validated":"타임스탬프에 기록된 해시값이 검증 대상과 일치합니다. 발급기관의 신뢰 여부는 별도 항목입니다."
+  };
+  const detail=trustOnly ? (code === "timeStamp.untrusted" ? "선택한 신뢰 목록에서 시간 인증 기관을 확인하지 못했습니다. 시간 정보의 신뢰를 별도로 확인해야 합니다." : "선택한 신뢰 목록에서 서명자를 확인하지 못했습니다. 파일이나 서명이 변조됐다는 뜻은 아닙니다.") : descriptions[code] || check.explanation || check.message || "원본 검사 코드를 펼쳐 세부 정보를 확인하세요.";
+  return {tone,label,icon,title:titles[code] || "추가 검증 항목",detail};
+}
+function displayCounts(item) {
+  const totals={success:0,failure:0,warning:0,informational:0};
+  for(const check of item.checks || [])totals[checkPresentation(check).tone]++;
+  return totals;
+}
 function previewURL(item) {
   const local = state.localUrls.get(item.id);
   if (local) return local;
@@ -332,7 +371,7 @@ function renderPreview(item) {
   $("#preview-card").innerHTML = `<div class="preview-stage">${content}<span class="preview-tag">${esc(mime || "FILE")}</span></div><div class="preview-caption"><strong>${esc(item.filename || "파일")}</strong><small>${sizes(item.size)} · SHA-256 ${esc((item.sha256 || "").slice(0, 18))}…</small></div>`;
 }
 function renderSummary(item) {
-  const signature = item.signature || {}, total = counts(item), active = activeManifest(item);
+  const signature = item.signature || {}, active = activeManifest(item);
   const software = (item.software || []).map(s => s.name).filter(Boolean).join(", ") || active.claim_generator || "정보 없음";
   const ai = item.ai === "declared" ? "Manifest에 선언됨" : "확인 가능한 선언 없음";
   const fields = [["서명자",signature.common_name || "정보 없음"],["발급자",signature.issuer || "정보 없음"],
@@ -340,41 +379,49 @@ function renderSummary(item) {
     ["Manifest",`${item.manifest_count || 0}개 ${item.embedded ? "· 파일 내장" : ""}`],
     ["처리 방식",item.processing_mode === "browser" ? "브라우저 내부" : "로컬 서버"],
     ["검증 정책",item.trust_profile === "lab" ? "실험용 CA 포함" : "기본 SDK 목록"]];
-  $("#summary-card").innerHTML = `<details class="technical-summary"><summary>검증 수치와 기술 정보 펼치기</summary><div class="summary-kicker">VERIFICATION OVERVIEW</div><h3>기술 정보</h3><div class="summary-checks"><span class="pass">✓ ${total.success} 통과</span><span class="info">○ ${total.informational} 안내</span><span class="fail">! ${total.failure} 오류</span></div><div class="summary-fields">${fields.map(([label,value])=>`<div><span>${term(label)}</span><strong>${label === "발급자" ? annotateIssuer(value) : label === "검증 정책" || label === "AI 생성 선언" ? annotateTerms(value) : esc(value)}</strong></div>`).join("")}</div><div class="summary-foot">검증 시각 ${when(item.created_at)}<br>서명 상태는 콘텐츠의 사실 여부를 보증하지 않습니다.</div></details>`;
+  return `<div class="summary-fields">${fields.map(([label,value])=>`<div><span>${term(label)}</span><strong>${label === "발급자" ? annotateIssuer(value) : label === "검증 정책" || label === "AI 생성 선언" ? annotateTerms(value) : esc(value)}</strong></div>`).join("")}</div><p class="small-note">검증 시각 ${when(item.created_at)}</p>`;
 }
 function renderBatch() {
   const target = $("#batch-list"); target.hidden = false;
   target.innerHTML = state.results.map((item,index)=>`<button class="${index === state.active ? "active" : ""}" data-result-index="${index}" type="button"><span>${esc(item.filename)}</span><small>${esc(stateLabels[item.state] || item.state || "상태 미확인")}</small></button>`).join("");
 }
 function renderVerdict(item) {
-  const status = item.state || "Unknown", name = stateLabels[status] || stateLabels.Unknown;
+  const status = item.state || "Unknown";
+  const name = {Trusted:"검증 통과 · 서명자 신뢰 확인",Valid:"파일 검증 통과 · 신뢰 미확인",Invalid:"검증 실패",NoManifest:"검증할 출처 기록 없음",RemoteUnavailable:"외부 기록이 필요해 검증 보류",Error:"파일 분석 오류",Unknown:"검증 상태 확인 불가"}[status] || "검증 상태 확인 불가";
   $("#verdict").className = `verdict ${esc(status.toLowerCase())}`;
-  $("#verdict").innerHTML = `<div class="verdict-icon">${status === "Trusted" || status === "Valid" ? "✓" : status === "Invalid" ? "!" : "?"}</div><div><span>파일에 기록된 출처 확인 결과</span><h3>${esc(name)}</h3><p>${annotateTerms(stateDescriptions[status] || "파일의 검증 상태를 세부 근거와 함께 확인하세요.")}</p><small class="verdict-limit">이 결과만으로 사진 속 장면의 사실 여부나 AI 생성 여부를 판정하지 않습니다. 밑줄 친 용어에 마우스를 올리면 설명이 나옵니다.</small></div>`;
+  const icon=status === "Trusted" ? "✓" : status === "Invalid" || status === "Error" ? "×" : status === "Valid" ? "!" : "−";
+  $("#verdict").innerHTML = `<div class="verdict-icon" aria-hidden="true">${icon}</div><div><span>전체 검증 결과</span><h3>${esc(name)}</h3><p>${esc(stateDescriptions[status] || "검사를 완료하지 못했습니다. 검사 상세에서 원인을 확인하세요.")}</p></div>`;
 }
 function renderReadout(item) {
   const status=item.state || "Unknown", present=Number(item.manifest_count || Object.keys(item.store?.manifests || {}).length)>0;
   const records=present ? ["있음","파일에 C2PA 출처 기록이 연결되어 있습니다.","yes"] : status === "NoManifest" ? ["없음","이 파일에서 확인 가능한 C2PA 기록을 찾지 못했습니다.","unknown"] : status === "RemoteUnavailable" ? ["외부 기록 필요","현재 설정에서는 외부 출처 기록을 가져오지 않습니다.","unknown"] : ["판단 불가","분석이 완료되지 않아 출처 기록의 유무를 단정할 수 없습니다.","unknown"];
-  const integrity=status === "Trusted" || status === "Valid" ? ["통과","서명과 파일 결합이 검증되었습니다.","yes"] : status === "Invalid" ? ["실패","검사 근거에서 실패한 항목을 확인하세요.","no"] : ["판단 불가","검증할 기록이 없거나 검사를 완료하지 못했습니다.","unknown"];
-  const signer=status === "Trusted" ? ["확인","선택한 신뢰 목록에서 서명자를 확인했습니다.","yes"] : status === "Valid" ? ["미확인","서명은 유효하지만 선택한 신뢰 목록에서는 확인되지 않았습니다.","unknown"] : ["판단 불가","이 결과로 서명자의 신뢰를 확인할 수 없습니다.","unknown"];
-  const entries=[["출처 기록이 있나요?",records],["서명 검사를 통과했나요?",integrity],["서명자를 확인했나요?",signer]];
-  $("#readout").innerHTML=`<div class="readout-heading"><strong>3가지 질문으로 읽기</strong><span>색보다 문장을 먼저 확인하세요</span></div><div class="readout-grid">${entries.map(([question,[answer,detail,tone]])=>`<article class="readout-card ${tone}"><span class="readout-symbol" aria-hidden="true">${tone === "yes" ? "✓" : tone === "no" ? "!" : "?"}</span><div><small>${esc(question)}</small><strong>${esc(answer)}</strong><p>${annotateTerms(detail)}</p></div></article>`).join("")}</div><p class="readout-foot">${status === "NoManifest" ? `${term("C2PA")} 기록이 없다는 사실은 가짜 또는 변조의 증거가 아닙니다. 원본 파일이나 게시자의 설명을 함께 확인하세요.` : "출처 기록의 검증과 콘텐츠 내용의 진위 판단은 다른 질문입니다."}</p>`;
+  const integrity=status === "Trusted" || status === "Valid" ? ["통과","서명과 파일 결합이 검증되었습니다.","yes"] : status === "Invalid" ? ["실패","검사 상세에서 실패한 항목을 확인하세요.","no"] : ["판단 불가","검증할 기록이 없거나 검사를 완료하지 못했습니다.","unknown"];
+  const activeChecks=(item.checks || []).filter(check=>check.scope === "activeManifest");
+  const signerConfirmed=status === "Trusted" || (activeChecks.some(check=>check.code === "signingCredential.trusted" && check.kind === "success") && !activeChecks.some(check=>check.kind === "failure" && check.code?.startsWith("signingCredential.")));
+  const signerUnconfirmed=status === "Valid" || activeChecks.some(check=>check.code === "signingCredential.untrusted");
+  const signer=signerConfirmed ? ["확인","선택한 신뢰 목록에서 서명자를 확인했습니다. 파일 검증 결과는 별도 항목입니다.","yes"] : signerUnconfirmed ? ["미확인","선택한 신뢰 목록에서 서명자를 확인하지 못했습니다.","unknown"] : ["판단 불가","이 결과로 서명자의 신뢰를 확인할 수 없습니다.","unknown"];
+  const entries=[["출처 기록",records],["파일·기록 검증",integrity],["서명자 신뢰",signer]];
+  $("#readout").innerHTML=`<div class="readout-heading"><strong>항목별 확인 결과</strong></div><div class="readout-grid">${entries.map(([question,[answer,detail,tone]])=>`<article class="readout-card ${tone}"><span class="readout-symbol" aria-hidden="true">${tone === "yes" ? "✓" : tone === "no" ? "×" : "−"}</span><div class="readout-copy"><div class="readout-title"><strong>${esc(question)}</strong><b class="readout-status">${esc(answer)}</b></div><p>${esc(detail)}</p></div></article>`).join("")}</div>`;
 }
 function explanationKey(item,mode){return `${item.id || state.active}:${mode}`;}
 function localExplanation(item,mode){
-  const status=item.state || "Unknown", failures=counts(item).failure;
+  const status=item.state || "Unknown", totals=displayCounts(item);
   const explanations={
-    Trusted:["출처 기록과 서명자 확인이 모두 끝났습니다.","서명과 파일의 연결이 검증됐고, 선택한 신뢰 목록에서 서명자도 확인됐습니다.","출처 지도와 변경 이력에서 누가 무엇을 기록했는지 살펴보세요."],
+    Trusted:["출처 기록과 서명자 확인이 모두 끝났습니다.","서명과 파일의 연결이 검증됐고, 선택한 신뢰 목록에서 서명자도 확인됐습니다.","출처 이력에서 누가 무엇을 기록했는지 살펴보세요."],
     Valid:["출처 기록은 유효하지만 서명자 신뢰는 확인되지 않았습니다.","서명 검사는 통과했지만 현재 선택한 신뢰 목록에서 서명자를 찾지 못했습니다.","제작자에게 서명 정보를 확인하거나 다른 신뢰 자료와 함께 보세요."],
-    Invalid:["출처 기록 검증에 실패했습니다.","기록이나 서명 검사에 실패한 항목이 있습니다. 원인은 검사 근거를 봐야 구분할 수 있습니다.","검사 근거에서 실패한 코드를 확인하고 원본 파일을 다시 받아보세요."],
+    Invalid:["출처 기록 검증에 실패했습니다.","기록이나 서명 검사에 실패한 항목이 있습니다. 원인은 검사 상세를 봐야 구분할 수 있습니다.","검사 상세에서 실패한 코드를 확인하고 원본 파일을 다시 받아보세요."],
     NoManifest:["이 파일에서 C2PA 출처 기록을 찾지 못했습니다.","기록이 처음부터 없었거나 전달 과정에서 사라졌을 수 있습니다. 이 결과는 가짜 판정이 아닙니다.","가능하면 원본 파일을 받고 게시자의 설명이나 다른 자료도 확인하세요."],
     RemoteUnavailable:["외부 출처 기록이 필요해 검증을 마치지 못했습니다.","현재 설정은 외부 기록을 가져오지 않으므로 기록의 상태를 확인할 수 없습니다.","제공자에게 출처 기록이 파일 안에 포함된 원본을 요청해 보세요."],
     Error:["파일 분석을 마치지 못했습니다.","파일 형식이나 손상 등으로 검사 결과를 얻지 못했습니다. C2PA 기록 유무도 단정할 수 없습니다.","파일을 다시 다운로드하거나 다른 원본으로 재검증해 보세요."]
   };
   const [summary,meaning,next_step]=explanations[status] || ["검증 상태를 확정하지 못했습니다.","현재 결과만으로 출처 기록의 상태를 단정할 수 없습니다.","원본 파일로 다시 검증해 보세요."];
-  const detail=mode === "detail" ? ` 검사 기록에는 통과 ${(item.checks || []).filter(c=>c.kind === "success").length}개, 실패 ${failures}개가 표시됩니다. ${item.ai === "declared" ? "AI 사용 선언이 기록되어 있지만 이것은 독립적인 AI 탐지가 아닙니다." : "AI 사용 선언이 보이지 않아도 AI 사용 여부를 확정할 수는 없습니다."}` : "";
+  const detail=mode === "detail" ? ` 검사 기록에는 통과 ${totals.success}개, 실패 ${totals.failure}개, 신뢰 미확인 ${totals.warning}개, 안내 ${totals.informational}개가 표시됩니다. ${item.ai === "declared" ? "AI 사용 선언이 기록되어 있지만 이것은 독립적인 AI 탐지가 아닙니다." : "AI 사용 선언이 보이지 않아도 AI 사용 여부를 확정할 수는 없습니다."}` : "";
   return {mode,source:"built_in",summary,meaning:meaning+detail,next_step,limit:"출처 검증은 사진 속 장면의 사실 여부, 법적 소유권 또는 AI 생성 여부를 단독으로 증명하지 않습니다."};
 }
 function renderAiPanel(item) {
+  const key=explanationKey(item,state.explainMode);
+  const error=state.explainErrors.get(key) || "";
+  const busy=state.explainBusy === key;
   const simple=state.explanations.get(explanationKey(item,"simple")) || localExplanation(item,"simple");
   const detail=state.explanations.get(explanationKey(item,"detail")) || localExplanation(item,"detail");
   const output=state.explainMode === "detail" ? detail : simple;
@@ -382,28 +429,52 @@ function renderAiPanel(item) {
   const outputBody=output.source === "ai"
     ? `<p style="white-space:pre-wrap">${esc(output.summary)}</p>`
     : `<h4>${esc(output.summary)}</h4><p><b>무슨 뜻인가요?</b> ${esc(output.meaning)}</p><p><b>다음에는?</b> ${esc(output.next_step)}</p>`;
-  $("#ai-explanation").innerHTML=`<div class="ai-explanation-head"><div><span class="ai-sparkle">✦</span><strong>AI 결과 보고서</strong><p>${esc(availability)}</p></div><div class="ai-explanation-actions"><button type="button" data-explain="simple" aria-pressed="${state.explainMode === "simple"}" ${state.explainBusy ? "disabled" : ""}>핵심 요약</button><button type="button" data-explain="detail" aria-pressed="${state.explainMode === "detail"}" ${state.explainBusy ? "disabled" : ""}>자세히 설명</button></div></div>${state.explainError ? `<p class="ai-explanation-error" role="alert">${esc(state.explainError)}</p>` : ""}${state.explainBusy ? `<p class="ai-explanation-wait" role="status">결과를 쉬운 말로 바꾸는 중…</p>` : ""}<div class="ai-explanation-output"><span>${output.source === "ai" ? "AI가 작성한 설명" : "검증 결과 기본 해설"} · ${state.explainMode === "detail" ? "자세히" : "요약"}</span>${outputBody}<small>${esc(output.limit)}</small></div>`;
+  const panel=$("#ai-explanation");
+  if(!panel.querySelector(".ai-explanation-output"))panel.innerHTML=`<div class="ai-explanation-head"><div><span class="ai-report-icon" aria-hidden="true">${aiReportIcon()}</span><strong>AI 결과 보고서</strong><p>${esc(availability)}</p></div><div class="ai-explanation-actions"><button type="button" data-explain="simple">핵심 요약</button><button type="button" data-explain="detail">자세히 설명</button></div></div><p class="ai-explanation-error" role="alert" hidden></p><p class="ai-explanation-wait" role="status" hidden>결과를 쉬운 말로 바꾸는 중…</p><div class="ai-explanation-output" aria-live="polite" aria-atomic="true"></div>`;
+  for(const button of panel.querySelectorAll("[data-explain]")){
+    button.disabled=Boolean(state.explainBusy);
+    button.setAttribute("aria-pressed",String(button.dataset.explain === state.explainMode));
+  }
+  const errorNode=panel.querySelector(".ai-explanation-error"),waitNode=panel.querySelector(".ai-explanation-wait");
+  errorNode.textContent=error;errorNode.hidden=!error;waitNode.hidden=!busy;
+  const target=panel.querySelector(".ai-explanation-output");
+  target.setAttribute("aria-busy",String(busy));
+  const content=`<span>${output.source === "ai" ? "AI가 작성한 설명" : "검증 결과 기본 해설"} · ${state.explainMode === "detail" ? "자세히" : "요약"}</span>${outputBody}<small>${esc(output.limit)}</small>`;
+  // Keep the previous answer mounted during the request; animate only changed text.
+  const contentKey=JSON.stringify([key,content]);
+  if(target.dataset.contentKey === contentKey)return;
+  target.getAnimations().forEach(animation=>animation.cancel());
+  const before=target.getBoundingClientRect().height,hadContent=Boolean(target.dataset.contentKey);
+  target.innerHTML=content;target.dataset.contentKey=contentKey;
+  if(window.matchMedia("(prefers-reduced-motion: reduce)").matches)return;
+  const after=target.getBoundingClientRect().height;
+  target.animate([{opacity:0,transform:"translateY(7px)"},{opacity:1,transform:"translateY(0)"}],{duration:320,easing:"cubic-bezier(.2,.65,.3,1)"});
+  if(hadContent && Math.abs(after-before)>1)target.animate([{height:`${before}px`},{height:`${after}px`}],{duration:280,easing:"ease-out"});
 }
+function aiReportIcon(){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>`;}
 async function explainCurrent(mode){
   const item=result();if(!item || state.explainBusy)return;
   state.explainMode=mode;
-  state.explainError="";
   const key=explanationKey(item,mode);
+  state.explainErrors.delete(key);
   const cached=state.explanations.get(key);
   if(cached?.source === "ai"){renderAiPanel(item);return;}
-  state.explainBusy=true;state.explainError="";renderAiPanel(item);
+  state.explainBusy=key;renderAiPanel(item);
   try {
-    const checks=(item.checks || []).slice(0,20).filter(check=>["success","failure","informational"].includes(check.kind))
+    const priority={failure:0,informational:1,success:2};
+    const checks=(item.checks || []).filter(check=>["success","failure","informational"].includes(check.kind))
+      .sort((a,b)=>priority[a.kind]-priority[b.kind]).slice(0,20)
       .map(check=>({kind:check.kind,code:String(check.code || "").replace(/[^A-Za-z0-9_.:-]/g,"").slice(0,100)}));
     const report={state:stateLabels[item.state] ? item.state : "Unknown",manifest_count:Math.min(1000,Math.max(0,Number(item.manifest_count || 0))),ai_declaration:item.ai === "declared" ? "declared" : item.ai === "not_declared" ? "not_declared" : "unknown",checks};
-    if(item.processing_mode === "server")report.trust_scope="FRAMEWORK_LOCAL";
+    report.trust_scope=item.trust_profile === "lab" ? "FRAMEWORK_LOCAL" : item.trust_profile === "standard" ? "SDK_DEFAULT" : "UNKNOWN";
+    report.pq_status=["VALID","INVALID","UNVERIFIED","NOT_PRESENT"].includes(item.pq_evidence?.status) ? item.pq_evidence.status : "UNKNOWN";
     const payload={audience:mode === "detail" ? "researcher" : "general",report};
     const response=await responseJSON(await fetch("/api/v1/ai/summaries",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}));
     const summary=response.data?.summary;
     if(typeof summary !== "string" || !summary.trim())throw new Error("서버가 비어 있는 AI 요약을 반환했습니다.");
     state.explanations.set(key,{mode,source:"ai",summary:summary.trim(),limit:localExplanation(item,mode).limit});
-  } catch(cause){state.explanations.set(key,localExplanation(item,mode));state.explainError=`${cause.message || "AI 요약 요청에 실패했습니다."} 기본 해설을 표시합니다. 버튼을 눌러 다시 시도할 수 있습니다.`;}
-  finally {state.explainBusy=false;if(result())renderAiPanel(result());}
+  } catch(cause){state.explanations.set(key,localExplanation(item,mode));state.explainErrors.set(key,`${cause.message || "AI 요약 요청에 실패했습니다."} 기본 해설을 표시합니다. 버튼을 눌러 다시 시도할 수 있습니다.`);}
+  finally {state.explainBusy="";if(result())renderAiPanel(result());}
 }
 function renderActions(item) {
   const labels = {"c2pa.created":"콘텐츠 생성","c2pa.edited":"콘텐츠 편집","c2pa.opened":"파일 열기","c2pa.placed":"재료 삽입","c2pa.resized":"크기 변경","c2pa.cropped":"자르기","c2pa.published":"발행","c2pa.transcoded":"인코딩 변경"};
@@ -423,15 +494,24 @@ function renderChain(item) {
   }).join("")}</div>`;
 }
 function renderOverview(item) {
-  const c = counts(item), signature = item.signature || {};
-  if(item.state === "NoManifest") return `<div class="no-credential"><div class="no-credential-art" aria-hidden="true"><span>▧</span><i></i><b>?</b></div><h3>이 파일에는 확인할 출처 기록이 없습니다</h3><p>${term("C2PA")} 기록이 처음부터 없었거나, 전달·편집 과정에서 사라졌을 수 있습니다. 이 화면만으로 진짜·가짜를 판단할 수 없습니다.</p><ol><li>가능하면 촬영·제작자가 보낸 원본 파일을 확인하세요.</li><li>게시물의 설명이나 다른 신뢰할 수 있는 출처도 함께 살펴보세요.</li><li>원본에 기록이 있다면 다시 업로드해 비교해 보세요.</li></ol><button type="button" data-go-detail="structure">기록이 없는 경우의 그림 보기 →</button></div>`;
-  const needsChecks=item.state === "Invalid" || item.state === "Error";
-  return `<div class="next-step"><strong>${item.state === "Invalid" ? "다음으로 할 일: 실패 원인 확인" : item.state === "Error" ? "다음으로 할 일: 파일 다시 확인" : item.state === "RemoteUnavailable" ? "다음으로 할 일: 외부 기록 확인" : "다음으로 할 일: 기록 내용 살펴보기"}</strong><p>${item.state === "Invalid" ? "검사 근거에서 어떤 항목이 실패했는지 확인하고 원본 파일을 다시 받아보세요." : item.state === "Error" ? "분석을 마치지 못했습니다. 파일 형식과 손상 여부를 확인한 뒤 다시 검증해 보세요." : item.state === "RemoteUnavailable" ? "이 파일의 기록이 외부에 있어 현재 설정으로는 확인할 수 없습니다. 원본 제공자에게 내장 기록이 있는 파일을 요청해 보세요." : "누가 서명했는지와 어떤 편집이 기록됐는지 출처 지도와 변경 이력에서 확인하세요."}</p><button type="button" data-go-detail="${needsChecks ? "checks" : "structure"}">${needsChecks ? "검사 근거 보기" : "출처 지도 보기"} →</button></div><div class="insight-grid"><article><span>검사 항목</span><strong>${c.success + c.informational + c.failure}</strong><p>${c.failure ? `${c.failure}개 오류를 우선 확인하세요.` : "검사 기록 수"}</p></article><article><span>제작·편집</span><strong>${(item.actions || []).length}</strong><p>기록된 작업 수</p></article><article><span>연결된 출처</span><strong>${(item.ingredients || []).length}</strong><p>이전 재료 수</p></article></div><div class="overview-split"><div><h3>이 파일에서 확인한 것</h3><ul><li>${term("서명자")}: <b>${esc(signature.common_name || "정보 없음")}</b></li><li>${term("AI 생성 선언")}: <b>${item.ai === "declared" ? "있음" : "확인되지 않음"}</b></li><li>${term("신뢰 목록")}: <b>${term(item.trust_profile === "lab" ? "실험용 CA 포함" : "기본 SDK 목록")}</b></li><li>외부 기록 자동 조회: <b>하지 않음</b></li></ul></div><div class="overview-note"><strong>이 결과로 알 수 없는 것</strong><p>서명 검증은 서명 이후 파일의 ${term("무결성")}과 기록된 출처를 확인합니다. 사진 속 장면이 사실인지, 법적 소유권이 누구에게 있는지는 단독으로 증명하지 않습니다.</p></div></div><h3 class="subhead">기록된 출처 연결</h3>${renderChain(item)}`;
+  const signature=item.signature || {}, totals=displayCounts(item);
+  const messages={
+    Trusted:["기록의 제작·편집 과정을 살펴보세요.","history","출처 이력 보기"],
+    Valid:["파일 검증은 통과했습니다. 확인되지 않은 신뢰 항목은 검사 상세에서 볼 수 있습니다.","checks","미확인 항목 보기"],
+    Invalid:[`검증 실패 원인을 먼저 확인하세요.${totals.failure ? ` 실패한 검사 ${totals.failure}개를 표시했습니다.` : ""}`,"checks","실패 항목 보기"],
+    NoManifest:["기록이 처음부터 없었거나 전달 과정에서 사라졌을 수 있습니다. 원본 파일을 받아 다시 검증해 보세요.",null,null],
+    RemoteUnavailable:["출처 기록이 파일 밖에 있습니다. 기록이 내장된 파일을 제공자에게 요청해 보세요.","checks","검사 상세 보기"],
+    Error:["파일 분석을 마치지 못했습니다. 파일 형식과 오류 내용을 확인한 뒤 다시 시도하세요.","checks","오류 내용 보기"]
+  };
+  const [message,tab,action]=messages[item.state] || ["원본 파일로 다시 검증해 보세요.","checks","검사 상세 보기"];
+  return `<div class="overview-facts"><div><span>${term("서명자")}</span><strong>${esc(signature.common_name || "기록 없음")}</strong></div><div><span>${term("AI 생성 선언")}</span><strong>${item.ai === "declared" ? "기록에 있음" : "확인 가능한 선언 없음"}</strong></div></div><div class="next-step compact"><p>${esc(message)}</p>${tab ? `<button type="button" data-go-detail="${tab}">${esc(action)} →</button>` : ""}</div><p class="result-boundary">이 검사는 출처 기록을 확인합니다. 사진 속 장면의 사실 여부나 AI 사용 여부 자체를 판정하지는 않습니다.</p><p class="term-guide">밑줄 친 용어에 마우스를 올리거나 키보드로 선택하면 설명을 볼 수 있습니다.</p>`;
 }
 function renderChecks(item) {
-  const list = [...(item.checks || [])].sort((a,b)=>({failure:0,informational:1,success:2}[a.kind] ?? 3)-({failure:0,informational:1,success:2}[b.kind] ?? 3));
-  const shown = state.checkFilter === "all" ? list : list.filter(c => c.kind === state.checkFilter);
-  return `<div class="filter-bar"><div><button data-check-filter="all" class="${state.checkFilter === "all" ? "active" : ""}">전체 ${list.length}</button><button data-check-filter="failure" class="${state.checkFilter === "failure" ? "active" : ""}">오류 ${list.filter(c=>c.kind === "failure").length}</button><button data-check-filter="informational" class="${state.checkFilter === "informational" ? "active" : ""}">안내 ${list.filter(c=>c.kind === "informational").length}</button><button data-check-filter="success" class="${state.checkFilter === "success" ? "active" : ""}">통과 ${list.filter(c=>c.kind === "success").length}</button></div><small>실패 항목 우선 정렬</small></div>${shown.length ? `<div class="check-rows">${shown.map(check=>`<article class="check ${esc(check.kind)}"><span class="check-mark">${check.kind === "failure" ? "!" : check.kind === "success" ? "✓" : "i"}</span><div><strong>${hintText(check.code || "검증 항목",check.explanation || check.message || "공식 SDK가 제공한 검사 코드입니다.")}</strong><p>${esc(check.explanation || check.message || "설명 정보 없음")}</p><small>${term(check.scope || "Manifest")}</small></div><b>${check.kind === "failure" ? "오류" : check.kind === "success" ? "통과" : "안내"}</b></article>`).join("")}</div>` : `<p class="empty">표시할 검증 항목이 없습니다.</p>`}<p class="small-note">개별 검사 코드와 전체 상태는 공식 SDK 응답을 사용합니다. 인증서 신뢰와 파일 변조는 서로 다른 원인입니다.</p>`;
+  const priority={failure:0,warning:1,informational:2,success:3},totals=displayCounts(item);
+  const list=(item.checks || []).map(check=>({check,...checkPresentation(check)})).sort((a,b)=>priority[a.tone]-priority[b.tone]);
+  const shown=state.checkFilter === "all" ? list : list.filter(row=>row.tone === state.checkFilter);
+  const filters=[["all","전체",list.length],["failure","실패",totals.failure],["warning","신뢰 미확인",totals.warning],["success","통과",totals.success],["informational","안내",totals.informational]];
+  return `<div class="checks-heading"><h3>항목별 검사 근거</h3><p>실패 → 신뢰 미확인 → 안내 → 통과 순으로 표시합니다.</p></div><div class="filter-bar"><div>${filters.map(([kind,label,total])=>`<button type="button" data-check-filter="${kind}" class="${state.checkFilter === kind ? "active" : ""}" aria-pressed="${state.checkFilter === kind}">${label} ${total}</button>`).join("")}</div></div>${item.error ? `<p class="analysis-error" role="status"><strong>분석 오류</strong> ${esc(item.error)}</p>` : ""}${shown.length ? `<div class="check-rows">${shown.map(({check,tone,label,icon,title,detail})=>`<article class="check ${tone}"><span class="check-mark" aria-hidden="true">${icon}</span><div><strong>${esc(title)}</strong><p>${esc(detail)}</p><details class="check-code"><summary>원본 검사 코드</summary><code>${esc(check.code || "코드 없음")}</code><small>SDK 분류: ${esc(check.kind || "정보 없음")} · 범위: ${esc(check.scope || "Manifest")}</small>${check.explanation || check.message ? `<p>${esc(check.explanation || check.message)}</p>` : ""}${check.url ? `<code>${esc(check.url)}</code>` : ""}</details></div><b class="check-status">${label}</b></article>`).join("")}</div>` : `<p class="empty">${list.length ? "이 분류에 해당하는 검사 항목이 없습니다." : "완료된 검사 항목이 없습니다. 통과를 의미하지 않습니다."}</p>`}<p class="small-note">‘신뢰 미확인’은 신뢰 목록에서 확인하지 못한 상태입니다. 실제 서명·파일 불일치는 ‘실패’로 표시합니다. SDK 원본 분류는 각 항목에서 확인할 수 있습니다.</p>`;
 }
 function renderJsonTree(value,depth=0) {
   if(value === null || typeof value !== "object") return `<span class="json-value">${esc(JSON.stringify(value))}</span>`;
@@ -468,7 +548,7 @@ function shortSvg(value, max=25) {
 function graphNode(id,x,y,width,title,subtitle,tone="neutral") {
   const colors={neutral:["#ffffff","#ccdaec"],good:["#eafbf3","#9edfc2"],bad:["#fff0f0","#efb1b8"],unknown:["#fff8e8","#ebd19a"],blue:["#eef4ff","#a7c2f9"]};
   const [fill,stroke]=colors[tone] || colors.neutral;
-  return `<g class="map-node" data-node="${id}" tabindex="0" role="button" aria-label="${esc(title)}: ${esc(subtitle)}"><title>${esc(title)}: ${esc(subtitle)}</title><rect x="${x}" y="${y}" width="${width}" height="96" rx="17" fill="${fill}" stroke="${stroke}" stroke-width="2"/><text x="${x+18}" y="${y+34}" class="node-title">${esc(title)}</text><text x="${x+18}" y="${y+63}" class="node-subtitle">${shortSvg(subtitle,Math.floor(width/11))}</text><circle cx="${x+width-23}" cy="${y+23}" r="11" fill="#fff" stroke="${stroke}"/><text x="${x+width-23}" y="${y+28}" text-anchor="middle" class="node-hint">?</text></g>`;
+  return `<g class="map-node" data-node="${id}" tabindex="0" role="button" aria-label="${esc(title)}: ${esc(subtitle)}"><title>${esc(title)}: ${esc(subtitle)}</title><rect x="${x}" y="${y}" width="${width}" height="96" rx="17" fill="${fill}" stroke="${stroke}" stroke-width="2"/><text x="${x+18}" y="${y+34}" class="node-title">${esc(title)}</text><text x="${x+18}" y="${y+63}" class="node-subtitle">${shortSvg(subtitle,Math.floor(width/11))}</text><circle cx="${x+width-23}" cy="${y+23}" r="11" fill="#fff" stroke="${stroke}"/><text x="${x+width-23}" y="${y+28}" text-anchor="middle" class="node-hint">i</text></g>`;
 }
 function buildStructureSvg(item) {
   const manifests=Object.keys(item.store?.manifests || {}), hasManifest=manifests.length>0;
@@ -503,7 +583,7 @@ function renderStructure(item) {
   return `<div class="structure-toolbar"><div><h3>출처 지도</h3><p>파일에서 읽은 기록으로 그렸습니다. 칸에 마우스를 올리거나 Tab 키로 선택해 보세요.</p></div><div class="structure-tools"><button id="structure-expand" type="button">크게 보기 ↗</button><button id="structure-download" type="button">그림 저장 ↓</button></div></div>
     <figure class="structure-figure">${buildStructureSvg(item)}<figcaption>실선은 파일에 기록된 연결입니다. 점선은 기록을 찾지 못해 판단할 수 없음을 뜻합니다.</figcaption></figure><div id="node-inspector" class="node-inspector" aria-live="polite"><strong>그림 읽는 법</strong><p>위에서 아래로 읽으세요. 각 칸에 커서를 올리면 이곳에 쉬운 설명이 나타납니다.</p></div>
     <dialog id="structure-dialog" class="structure-dialog" aria-label="출처 구조 그림 크게 보기"><form method="dialog"><button type="submit" aria-label="닫기">닫기 ×</button></form><img src="${source}" alt="${esc(alt)}"></dialog>
-    <p class="structure-warning">이 그림은 결과를 이해하기 위한 요약입니다. 서명 검사 세부 내용은 검사 근거에서 확인하세요.</p>`;
+    <p class="structure-warning">이 그림은 결과를 이해하기 위한 요약입니다. 서명 검사 세부 내용은 검사 상세에서 확인하세요.</p>`;
 }
 function publicReferences(item) {
   const store=item.store || {}, found=[]; const seen=new Set();
@@ -525,12 +605,25 @@ function renderAnchors(item) {
 }
 function renderDetail() {
   const item=result(); if (!item) return;
-  $$('[data-detail]').forEach(tab=>tab.classList.toggle("active",tab.dataset.detail===state.detail));
+  if(!["overview","history","checks"].includes(state.detail))state.detail="overview";
+  $$('[data-detail]').forEach(tab=>{
+    const selected=tab.dataset.detail===state.detail;
+    tab.classList.toggle("active",selected);tab.setAttribute("aria-selected",String(selected));tab.tabIndex=selected ? 0 : -1;
+  });
   $("#readout").hidden=state.detail!=="overview";
-  const target=$("#detail-panel");
-  target.innerHTML = state.detail === "checks" ? renderChecks(item) : state.detail === "history" ? renderHistory(item)
-    : state.detail === "structure" ? renderStructure(item) : state.detail === "manifest" ? renderManifest(item) : state.detail === "metadata" ? renderMetadata(item)
-    : state.detail === "anchors" ? renderAnchors(item) : renderOverview(item);
+  $("#verdict").hidden=state.detail!=="overview";
+  const target=$("#detail-panel"), viewKey=`${item.id || state.active}:${state.detail}`;
+  const expanded=target.dataset.viewKey === viewKey ? [...target.querySelectorAll("details[data-section][open]")].map(node=>node.dataset.section) : [];
+  target.innerHTML = state.detail === "checks"
+    ? `${renderChecks(item)}<div class="evidence-folders"><details data-section="technical"><summary>서명·검증 환경</summary>${renderSummary(item)}</details><details data-section="file"><summary>파일 정보</summary>${renderMetadata(item)}</details><details data-section="manifest"><summary>원본 출처 기록 · JSON</summary>${renderManifest(item)}</details><details data-section="anchors"><summary>시간 정보·공개 참조</summary>${renderAnchors(item)}</details></div>`
+    : state.detail === "history" ? `${renderHistory(item)}<details class="history-map" data-section="map"><summary>출처 연결을 그림으로 보기</summary>${renderStructure(item)}</details>` : renderOverview(item);
+  for(const section of target.querySelectorAll("details[data-section]"))section.open=expanded.includes(section.dataset.section);
+  target.dataset.viewKey=viewKey;
+  $("#result-tabpanel").setAttribute("aria-labelledby",`detail-tab-${state.detail}`);
+}
+function selectDetail(name) {
+  state.detail=name;state.checkFilter="all";renderDetail();
+  $(".report-scroll").scrollTop=0;
 }
 function compareRow(label,a,b) { return `<div class="compare-row"><span>${esc(label)}</span><strong>${esc(a ?? "—")}</strong><strong>${esc(b ?? "—")}</strong></div>`; }
 function renderCompare() {
@@ -540,7 +633,7 @@ function renderCompare() {
   for(const name of ["a","b"]) {const select=$(`#compare-${name}`), previous=Number(select.value);select.innerHTML=choices;select.value=String(Number.isInteger(previous)&&previous>=0&&previous<state.results.length ? previous : name === "a" ? 0 : state.results.length-1);}
   if($("#compare-a").value===$("#compare-b").value)$("#compare-b").value=$("#compare-a").value===String(state.results.length-1) ? "0" : String(state.results.length-1);
   const a=state.results[Number($("#compare-a").value)],b=state.results[Number($("#compare-b").value)];
-  const ca=counts(a),cb=counts(b);
+  const ca=displayCounts(a),cb=displayCounts(b);
   $("#compare-grid").innerHTML=`<div class="compare-header"><span>비교 항목</span><strong>${esc(a.filename)}</strong><strong>${esc(b.filename)}</strong></div>${compareRow("검증 상태",stateLabels[a.state] || a.state,stateLabels[b.state] || b.state)}${compareRow("서명자",a.signature?.common_name,b.signature?.common_name)}${compareRow("AI 선언",a.ai === "declared" ? "있음" : "확인되지 않음",b.ai === "declared" ? "있음" : "확인되지 않음")}${compareRow("검증 오류",ca.failure,cb.failure)}${compareRow("Manifest",a.manifest_count || 0,b.manifest_count || 0)}${compareRow("SHA-256",a.sha256,b.sha256)}<p>동일한 해시는 동일 파일 바이트를 뜻합니다. 상태 차이가 있으면 신뢰 정책과 검증 시각도 확인하세요.</p>`;
 }
 function render() {
@@ -549,7 +642,7 @@ function render() {
   $("#file-count").textContent=`${state.results.length} / 10`;
   $("#preview-filename").textContent=item.filename || "파일 미리보기";
   $("#preview-subtitle").textContent=`${(item.mime || "파일").split("/").pop().toUpperCase()} · ${sizes(item.size)}`;
-  renderBatch(); renderVerdict(item); renderReadout(item); renderAiPanel(item); renderPreview(item); renderSummary(item); renderDetail(); renderCompare();
+  renderBatch(); renderVerdict(item); renderReadout(item); renderAiPanel(item); renderPreview(item); renderDetail(); renderCompare();
   const saved=item.report_saved !== false;
   $("#copy-live").hidden=!saved || !item.source_url;
   $("#copy-report").hidden=!saved || !item.id;
@@ -561,6 +654,7 @@ function exportBlob(data,name,type) {
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
 function reportName(item,suffix) {return `${(item.filename || "file").replace(/[^\p{L}\p{N}._-]/gu,"_")}-c2pa-report.${suffix}`;}
+function pdfReportName(item,type) {const label={summary:"일반인용",submission:"경찰서제출용",pq:"PQ변환본종합",technical:"상세분석"}[type] || "보고서";return `${(item.filename || "file").replace(/[^\p{L}\p{N}._-]/gu,"_")}-C2PA-${label}.pdf`;}
 function copy(value) {navigator.clipboard.writeText(value).then(()=>toast("링크를 복사했습니다.")).catch(()=>toast(value));}
 function reportURL(id) {const url=new URL("/viewer/",location.origin);url.searchParams.set("report",id);return url.href;}
 function liveURL(item) {const url=new URL("/viewer/",location.origin);url.searchParams.set("url",item.source_url);url.searchParams.set("trust",item.trust_profile || "standard");return url.href;}
@@ -586,8 +680,16 @@ function showIntake(){navigatePage("verify");window.scrollTo({top:0,behavior:"in
 $("#new-check").onclick=showIntake;
 $("#new-check-secondary").onclick=showIntake;
 $("#batch-list").onclick=event=>{const button=event.target.closest("[data-result-index]");if(!button)return;state.active=Number(button.dataset.resultIndex);state.selectedManifest=result().store?.active_manifest || null;render();};
-$(".detail-tabs").onclick=event=>{const button=event.target.closest("[data-detail]");if(!button)return;state.detail=button.dataset.detail;renderDetail();};
-$("#detail-panel").onclick=event=>{const button=event.target.closest("[data-check-filter]");if(button){state.checkFilter=button.dataset.checkFilter;renderDetail();}const jump=event.target.closest("[data-go-detail]");if(jump){state.detail=jump.dataset.goDetail;renderDetail();$("#detail-panel").scrollIntoView({block:"nearest",behavior:"smooth"});}if(event.target.closest("#manifest-download")){const item=result();exportBlob(JSON.stringify(item.store || {},null,2),reportName(item,"manifest.json"),"application/json");}if(event.target.closest("#structure-download")){const item=result();exportBlob(buildStructureSvg(item),reportName(item,"structure.svg"),"image/svg+xml;charset=utf-8");toast("출처 구조 그림을 저장했습니다.");}if(event.target.closest("#structure-expand"))$("#structure-dialog").showModal();};
+$(".detail-tabs").onclick=event=>{const button=event.target.closest("[data-detail]");if(!button)return;selectDetail(button.dataset.detail);};
+$(".detail-tabs").onkeydown=event=>{
+  if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+  const tabs=$$(".detail-tabs [data-detail]"),current=tabs.indexOf(event.target);
+  if(current<0)return;
+  event.preventDefault();
+  const next=event.key === "Home" ? 0 : event.key === "End" ? tabs.length-1 : (current+(event.key === "ArrowRight" ? 1 : -1)+tabs.length)%tabs.length;
+  selectDetail(tabs[next].dataset.detail);tabs[next].focus();
+};
+$("#detail-panel").onclick=event=>{const button=event.target.closest("[data-check-filter]");if(button){state.checkFilter=button.dataset.checkFilter;renderDetail();$(`[data-check-filter="${state.checkFilter}"]`).focus({preventScroll:true});}const jump=event.target.closest("[data-go-detail]");if(jump){selectDetail(jump.dataset.goDetail);$(`[data-detail="${state.detail}"]`).focus();}if(event.target.closest("#manifest-download")){const item=result();exportBlob(JSON.stringify(item.store || {},null,2),reportName(item,"manifest.json"),"application/json");}if(event.target.closest("#structure-download")){const item=result();exportBlob(buildStructureSvg(item),reportName(item,"structure.svg"),"image/svg+xml;charset=utf-8");toast("출처 구조 그림을 저장했습니다.");}if(event.target.closest("#structure-expand"))$("#structure-dialog").showModal();};
 $("#detail-panel").onchange=event=>{if(event.target.id === "manifest-select"){state.selectedManifest=event.target.value;renderDetail();}};
 function describeMapNode(event){
   const node=event.target.closest?.("[data-node]");if(!node || !$("#node-inspector"))return;
@@ -611,27 +713,251 @@ $("#ai-explanation").addEventListener("click",event=>{const button=event.target.
 $("#copy-live").onclick=()=>copy(liveURL(result()));
 $("#copy-report").onclick=()=>copy(reportURL(result().id));
 $("#download-json").onclick=()=>{const item=result();exportBlob(JSON.stringify(item,null,2),reportName(item,"json"),"application/json");};
-$("#download-pdf").onclick=()=>{
+const REPORT_PROFILE_FIELDS={author:"#report-author",organization:"#report-organization",requester:"#report-requester",reviewer:"#report-reviewer"};
+const REPORT_PROFILE_KEY="pq-c2pa-report-profile";
+function loadReportProfile(){
+  try{const saved=JSON.parse(localStorage.getItem(REPORT_PROFILE_KEY) || "{}");for(const [key,selector] of Object.entries(REPORT_PROFILE_FIELDS))if(typeof saved[key] === "string" && !$(selector).value)$(selector).value=saved[key].slice(0,80);}catch{}
+}
+function saveReportProfile(options){
+  try{localStorage.setItem(REPORT_PROFILE_KEY,JSON.stringify(Object.fromEntries(Object.keys(REPORT_PROFILE_FIELDS).map(key=>[key,options[key] || ""]))));}catch{}
+}
+function reportOptions(){
+  const value=selector=>$(selector).value.trim();
+  return {caseNumber:value("#report-case"),requester:value("#report-requester"),requestDocNo:value("#report-request-doc"),requestDate:$("#report-request-date").value,
+    author:value("#report-author"),organization:value("#report-organization"),reviewer:value("#report-reviewer"),purpose:value("#report-purpose"),
+    includePreview:$("#report-preview").checked,register:$("#report-register").checked,
+    emailToken:identityState.email?.token || null,orgCode:identityState.org?.code || null};
+}
+function syncReportMeta(){const type=$("input[name=report-type]:checked")?.value || "summary";$("#report-meta").open=type !== "summary";}
+$$("input[name=report-type]").forEach(input=>input.addEventListener("change",syncReportMeta));
+async function reportEnvironment(item){
+  if(item.processing_mode === "browser")return null;
+  try{const response=await fetch("/engine/api/health",{cache:"no-store"});return response.ok ? await response.json() : null;}catch{return null;}
+}
+const reportImages=new Map();
+async function currentImageURL(item){
+  const local=state.localUrls.get(item.id) || reportImages.get(item.id);
+  if(local)return local;
+  if(item.sample_id && /^[a-z]+$/.test(item.sample_id)){
+    try{const response=await fetch(`/engine/api/samples/${encodeURIComponent(item.sample_id)}/file`,{cache:"no-store"});if(response.ok){const url=URL.createObjectURL(await response.blob());reportImages.set(item.id,url);return url;}}catch{}
+  }
+  return null;
+}
+// PQ conversion jobs from this browser session, looked up by the converted file's hash.
+const CONVERSION_JOBS_KEY="pq-c2pa-conversions";
+function rememberConversion(job){
+  const output=job?.result || {};if(!output.file_sha3_256 && !output.file_sha256)return;
+  try{const saved=JSON.parse(sessionStorage.getItem(CONVERSION_JOBS_KEY) || "[]").filter(entry=>entry?.result?.file_sha3_256 !== output.file_sha3_256);
+    saved.unshift(job);sessionStorage.setItem(CONVERSION_JOBS_KEY,JSON.stringify(saved.slice(0,20)));}catch{}
+}
+function conversionFor(item){
+  try{return JSON.parse(sessionStorage.getItem(CONVERSION_JOBS_KEY) || "[]").find(job=>(item.sha3_256 && job?.result?.file_sha3_256 === item.sha3_256) || (item.sha256 && job?.result?.file_sha256 === item.sha256)) || null;}catch{return null;}
+}
+function hasPqEvidence(item){
+  if(item?.pq_evidence?.present)return true;
+  const store=item?.store || {},active=(store.manifests || {})[store.active_manifest] || {};
+  return (active.assertions || []).some(assertion=>String(assertion.label || "").startsWith("org.pq-c2pa.p1"));
+}
+const PQ_REPORT_NOTE=$("#report-pq-note").textContent;
+function openReportDialog(preferred){
   const item=result();if(!item)return;
   $("#report-dialog-file").textContent=`${item.filename || "파일"} · ${stateLabels[item.state] || "상태 미확인"}`;
   $("#report-error").hidden=true;
+  const pqInput=$("input[name=report-type][value=pq]"),pqReady=hasPqEvidence(item);
+  pqInput.disabled=!pqReady;
+  $("#report-pq-note").textContent=pqReady ? PQ_REPORT_NOTE : "P1 양자내성 증거가 있는 변환본에서만 만들 수 있습니다. PQ 변환 화면에서 변환한 뒤 새 이미지를 검증하세요.";
+  const wanted=preferred && $(`input[name=report-type][value=${preferred}]`);
+  if(wanted && !wanted.disabled)wanted.checked=true;
+  else if(pqInput.checked && !pqReady)$("input[name=report-type][value=summary]").checked=true;
+  loadReportProfile();syncReportMeta();
   $("#report-dialog").showModal();
-};
+}
+$("#download-pdf").onclick=()=>openReportDialog();
 $("#report-close").onclick=()=>$("#report-dialog").close();
 $("#report-dialog").addEventListener("click",event=>{if(event.target === $("#report-dialog"))$("#report-dialog").close();});
+// Optional author checks without login: an institutional e-mail one-time code or an
+// organisation code issued by the administrator. The e-mail token lasts for this tab only.
+const IDENTITY_KEY="pq-c2pa-report-identity";
+const identityState={email:null,org:null};
+function apiMessage(data){const detail=data?.detail;return typeof detail === "string" ? detail : Array.isArray(detail) ? "입력 형식을 확인하세요." : "";}
+async function postJSON(url,body){
+  const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  let data={};try{data=await response.json();}catch{}
+  if(!response.ok){const error=new Error(apiMessage(data) || `요청을 처리하지 못했습니다(${response.status}).`);error.status=response.status;throw error;}
+  return data;
+}
+function identityMessage(target,text,kind=""){const node=$(target);node.textContent=text;node.className=`identity-status${kind ? ` ${kind}` : ""}`;}
+function saveIdentity(){try{identityState.email ? sessionStorage.setItem(IDENTITY_KEY,JSON.stringify(identityState.email)) : sessionStorage.removeItem(IDENTITY_KEY);}catch{}}
+function renderIdentity(){
+  if(identityState.email)identityMessage("#report-email-status",`확인됨 · ${identityState.email.email_masked} (${String(identityState.email.verified_at).slice(0,16).replace("T"," ")}) · 이 탭을 닫으면 다시 인증합니다`,"ok");
+  if(identityState.org)identityMessage("#report-org-status",`확인됨 · ${identityState.org.organization}`,"ok");
+}
+try{const saved=JSON.parse(sessionStorage.getItem(IDENTITY_KEY) || "null");if(saved?.token && Date.parse(saved.expires_at)>Date.now())identityState.email=saved;}catch{}
+renderIdentity();
+$("#report-email").addEventListener("input",()=>{if(identityState.email){identityState.email=null;saveIdentity();identityMessage("#report-email-status","");}});
+$("#report-org-code").addEventListener("input",()=>{identityState.org=null;identityMessage("#report-org-status","");});
+$("#report-email-send").onclick=async()=>{
+  const email=$("#report-email").value.trim(),button=$("#report-email-send");
+  if(!email){identityMessage("#report-email-status","기관 이메일을 입력하세요.","error");return;}
+  button.disabled=true;
+  try{const data=await postJSON("/engine/api/identity/email/start",{email});
+    $("#report-email-code-row").hidden=false;$("#report-email-code").value="";$("#report-email-code").focus();
+    identityMessage("#report-email-status",data.delivery === "server-log" ? `로컬 시험 모드: ${data.email_masked}의 확인 코드를 서버 로그에 기록했습니다. 10분 안에 입력하세요.` : `${data.email_masked}로 확인 코드를 보냈습니다. 10분 안에 입력하세요.`);
+  }catch(cause){identityMessage("#report-email-status",cause.message,"error");}
+  finally{button.disabled=false;}
+};
+$("#report-email-verify").onclick=async()=>{
+  const email=$("#report-email").value.trim(),code=$("#report-email-code").value.trim(),button=$("#report-email-verify");
+  if(!/^\d{6}$/.test(code)){identityMessage("#report-email-status","메일로 받은 6자리 숫자를 입력하세요.","error");return;}
+  button.disabled=true;
+  try{identityState.email=await postJSON("/engine/api/identity/email/verify",{email,code});saveIdentity();$("#report-email-code-row").hidden=true;renderIdentity();}
+  catch(cause){identityMessage("#report-email-status",cause.message,"error");}
+  finally{button.disabled=false;}
+};
+$("#report-org-check").onclick=async()=>{
+  const code=$("#report-org-code").value.trim(),button=$("#report-org-check");
+  if(!code){identityMessage("#report-org-status","관리자에게 받은 기관 코드를 입력하세요.","error");return;}
+  button.disabled=true;
+  try{const data=await postJSON("/engine/api/identity/org-code",{code});identityState.org={code,organization:data.organization};renderIdentity();}
+  catch(cause){identityState.org=null;identityMessage("#report-org-status",cause.message,"error");}
+  finally{button.disabled=false;}
+};
+
+// Issue → build → seal. The server only receives hashes and the result summary; when it
+// cannot be reached the PDF is still produced and clearly marked as unregistered.
+async function requestIssuance(module,item,type,options){
+  const body=await module.prepareIssuance(item,type,options);
+  try{return await postJSON("/engine/api/report-issuances",body);}
+  catch(cause){
+    if(cause.status === 400){
+      if(/이메일/.test(cause.message)){identityState.email=null;saveIdentity();identityMessage("#report-email-status",cause.message,"error");}
+      if(/기관 코드/.test(cause.message)){identityState.org=null;identityMessage("#report-org-status",cause.message,"error");}
+      throw cause;
+    }
+    return {offline:true,reason:cause.status ? `발급 서버 응답 ${cause.status}` : "발급 서버에 연결하지 못함"};
+  }
+}
+async function sealIssuance(issuance,bytes){
+  try{
+    const digest=await crypto.subtle.digest("SHA-256",bytes);
+    const pdf_sha256=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");
+    await postJSON(`/engine/api/report-issuances/${encodeURIComponent(issuance.doc_no)}/finalize`,{verification_code:issuance.verification_code,pdf_sha256,pdf_size:bytes.byteLength});
+    return true;
+  }catch{return false;}
+}
 $("#report-generate").onclick=async()=>{
   const item=result();if(!item)return;
   const type=$("input[name=report-type]:checked")?.value || "summary";
   const button=$("#report-generate"),notice=$("#report-error");
-  button.disabled=true;button.textContent="PDF 만드는 중…";notice.hidden=true;
+  button.disabled=true;notice.hidden=true;
   try{
-    const {buildPdfReport}=await import("./pdf-report.js?v=20261021-choices2");
-    const bytes=await buildPdfReport(item,type);
-    exportBlob(bytes,reportName(item,`${type}.pdf`),"application/pdf");
-    $("#report-dialog").close();toast("선택한 PDF 보고서를 저장했습니다.");
+    if($("#report-org-code").value.trim() && !identityState.org)throw new Error("기관 코드를 입력했다면 ‘확인’을 먼저 눌러 주세요.");
+    const options=reportOptions();saveReportProfile(options);
+    button.textContent="준비 중…";
+    const [module,environment,currentImageUrl]=await Promise.all([import("./pdf-report.js?v=20261103-integrated"),reportEnvironment(item),options.includePreview ? currentImageURL(item) : null]);
+    button.textContent="발급 번호 받는 중…";
+    const issuance=options.register ? await requestIssuance(module,item,type,options) : null;
+    button.textContent="PDF 만드는 중…";
+    const bytes=await module.buildPdfReport(item,type,{...options,environment,currentImageUrl,conversion:type === "pq" ? conversionFor(item) : null,issuance});
+    const registered=Boolean(issuance && !issuance.offline);
+    const sealed=registered ? await sealIssuance(issuance,bytes) : false;
+    exportBlob(bytes,pdfReportName(item,type),"application/pdf");
+    $("#report-dialog").close();
+    toast(registered ? (sealed ? `발급 등록을 마쳤습니다 · ${issuance.doc_no}` : "PDF는 저장했지만 진위 확인용 PDF 등록을 마치지 못했습니다.")
+      : issuance?.offline ? "발급 서버에 연결하지 못해 미등록 PDF로 저장했습니다." : "미등록 PDF로 저장했습니다.");
   }catch(cause){notice.textContent=`PDF를 만들지 못했습니다: ${cause.message}`;notice.hidden=false;}
   finally{button.disabled=false;button.textContent="선택한 PDF 다운로드 ↓";}
 };
+
+// Report check page: number + code, PDF hash (file stays in the browser), or a PDF that was
+// signed afterwards with an institutional certificate (uploaded for signature verification).
+const REPORT_KIND={summary:"일반인용",submission:"경찰서 제출용",pq:"PQ 변환본",technical:"상세분석"};
+const PQ_KO={VALID:"유효",INVALID:"검증 실패",UNVERIFIED:"검사하지 못함",NOT_PRESENT:"없음"};
+const SIG_KO={VALID:["유효","check-ok"],INVALID:["서명 불일치","check-bad"],UNSIGNED:["서명 없음","check-warn"],UNVERIFIABLE:["이 서버에서 확인 불가","check-warn"]};
+const DECLARED_KO={requester:"의뢰기관",case_number:"사건번호",request_doc_no:"의뢰 공문 번호",request_date:"의뢰일",purpose:"의뢰 요청사항",author:"작성자",organization:"소속",reviewer:"검토자"};
+function checkMessage(text,{error=false}={}){$("#check-progress").hidden=error || !text;$("#check-progress").textContent=error ? "" : text;$("#check-error").hidden=!error;$("#check-error").textContent=error ? text : "";}
+function timeText(iso){const m=/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?$/.exec(String(iso || ""));return m ? `${m[1]} ${m[2]}${m[3] ? ` (UTC${m[3] === "Z" ? "+00:00" : m[3]})` : ""}` : esc(iso || "—");}
+function signatureCell(status,fingerprint){const [label,cls]=SIG_KO[status] || [status || "—","check-warn"];return `<span class="${cls}">ML-DSA-65 ${esc(label)}</span>${fingerprint ? `<br><small>서버 공개키 SHA-256 <code>${esc(fingerprint)}</code></small>` : ""}`;}
+function issuanceTable(view){
+  const record=view.record || {},file=record.file || {},res=record.result || {},id=record.identity || {},email=id.author_email || {},org=id.organization || {};
+  const rows=[
+    ["문서번호",`<code>${esc(view.doc_no)}</code>`],["보고서 종류",esc(REPORT_KIND[view.report_type] || view.report_type)],
+    ["발급 시각",`${timeText(view.issued_at)} · 발급 서버 시각`],["발급 기관",esc(record.issuer?.name || "—")],
+    ["대상 파일 SHA-256",`<code>${esc(file.sha256 || "—")}</code>`],
+    ["검증 결과",`${esc(stateLabels[res.state] || res.state || "—")} · Manifest ${Number(res.manifest_count) || 0}개 · P1 ${esc(PQ_KO[res.pq_status] || res.pq_status || "—")}${res.trust_profile === "lab" ? " · 실험용 CA 포함 기준" : ""}`],
+    ["작성자 확인",email.status === "VERIFIED" ? `<span class="check-ok">기관 이메일 인증</span> ${esc(email.email_masked)} · ${timeText(email.verified_at)}` : "확인하지 않음(보고서의 자필 서명으로 확인)"],
+    ["소속 확인",org.status === "VERIFIED" ? `<span class="check-ok">관리자 등록 기관 코드</span> ${esc(org.name)}` : "확인하지 않음"],
+    ["기재 항목",(record.declared_fields || []).length ? `${record.declared_fields.slice().sort((x,y)=>Object.keys(DECLARED_KO).indexOf(x)-Object.keys(DECLARED_KO).indexOf(y)).map(key=>esc(DECLARED_KO[key] || key)).join(", ")}<br><small>원문은 서버에 없고 SHA-256(<code>${esc(String(record.declared_sha256 || "").slice(0,16))}…</code>)으로만 등록됨 · 사실 여부는 확인하지 않음</small>` : "없음"],
+    ["발급 기록 서명",signatureCell(view.signature?.status,view.signature?.public_key_sha256)],
+    ["PDF 등록",view.pdf?.registered ? `등록됨 · ${Number(view.pdf.size).toLocaleString("ko-KR")} B · ${timeText(view.pdf.finalized_at)}<br><small>SHA-256 <code>${esc(view.pdf.sha256)}</code> · 봉인 ${signatureCell(view.pdf.seal_status)}</small>` : '<span class="check-warn">PDF가 등록되지 않음(발급 중단 또는 등록 실패)</span>'],
+  ];
+  if(view.pdf_match === true)rows.push(["PDF 대조",'<span class="check-ok">일치 · 발급 후 바뀌지 않음</span>']);
+  return `<table class="check-table"><tbody>${rows.map(([key,value])=>`<tr><th scope="row">${key}</th><td>${value}</td></tr>`).join("")}</tbody></table>`;
+}
+function checkHead(kind,title,text){const icon={ok:"✓",warn:"!",bad:"×"}[kind];return `<div class="check-head ${kind}"><span class="check-icon" aria-hidden="true">${icon}</span><div><span class="section-label">REPORT CHECK</span><h2>${esc(title)}</h2><p>${esc(text)}</p></div></div>`;}
+function renderIssuance(view,{byPdf=false}={}){
+  const sigOk=view.signature?.status === "VALID" || view.signature?.status === "UNSIGNED";
+  const kind=view.signature?.status === "INVALID" ? "bad" : byPdf ? "ok" : view.pdf?.registered ? "ok" : "warn";
+  const title=view.signature?.status === "INVALID" ? "발급 기록의 서명이 맞지 않습니다" : byPdf ? "등록된 발급 보고서와 같은 PDF입니다" : "등록된 발급 보고서입니다";
+  const text=byPdf ? "PDF의 SHA-256이 발급 때 등록된 값과 같습니다. 발급 후 바뀌지 않았습니다." : sigOk ? "문서번호와 확인번호가 일치합니다. 가지고 있는 PDF를 올리면 내용이 같은지도 대조합니다." : "서버 기록이 변경되었을 수 있습니다. 발급 기관에 문의하세요.";
+  $("#check-result").innerHTML=checkHead(kind,title,text)+issuanceTable(view);$("#check-result").hidden=false;
+}
+function renderSigned(data){
+  const sigs=data.signatures || [];
+  const good=data.original && sigs.length && sigs.every(sig=>sig.valid && sig.covers_original);
+  const head=!data.original ? checkHead("bad","등록된 발급 원본을 찾지 못했습니다","전자서명 전 원본 PDF가 이 서버의 발급 기록과 다르거나, 이 서버에서 발급한 문서가 아닙니다.")
+    : !sigs.length ? checkHead("warn","전자서명을 찾지 못했습니다","발급 원본은 그대로 들어 있지만 PDF 전자서명이 없습니다.")
+    : good ? checkHead("ok","발급 원본에 유효한 전자서명이 추가된 PDF입니다","등록된 원본이 바뀌지 않았고, 아래 인증서로 문서 전체에 서명했습니다.")
+    : checkHead("bad","전자서명 검증에 실패했습니다","서명이 맞지 않거나 원본 범위를 덮지 않습니다.");
+  const list=sigs.map((sig,i)=>{const s=sig.signer || {};return `<h3>전자서명 ${i+1}</h3><table class="check-table"><tbody>
+    <tr><th scope="row">서명 검증</th><td>${sig.valid ? '<span class="check-ok">유효</span>' : '<span class="check-bad">실패</span>'}</td></tr>
+    <tr><th scope="row">서명자</th><td>${esc(s.subject || "확인할 수 없음")}</td></tr><tr><th scope="row">발급자</th><td>${esc(s.issuer || "—")}</td></tr>
+    <tr><th scope="row">일련번호 · 유효기간</th><td><code>${esc(s.serial || "—")}</code><br>${esc(s.not_before || "")} ~ ${esc(s.not_after || "")}</td></tr>
+    <tr><th scope="row">서명 범위</th><td>${sig.covers_original ? "발급 원본 전체 포함" : '<span class="check-bad">발급 원본을 모두 덮지 않음</span>'} · ${sig.covers_whole_file ? "파일 전체" : "파일 일부"}</td></tr>
+    <tr><th scope="row">인증서 신뢰</th><td>${sig.chain === "TRUSTED" ? '<span class="check-ok">등록된 신뢰 앵커에 연결됨</span>' : sig.chain === "UNTRUSTED" ? '<span class="check-bad">등록된 신뢰 앵커에 연결되지 않음</span>' : '<span class="check-warn">신뢰 앵커 미설정 · 인증서 발급 체계는 확인하지 않음</span>'}</td></tr></tbody></table>`;}).join("");
+  $("#check-result").innerHTML=head+(data.original ? `<h3>발급 원본</h3>${issuanceTable(data.original)}` : "")+list;$("#check-result").hidden=false;
+}
+async function checkByNumber(no,code){
+  checkMessage("발급 기록을 조회하는 중입니다…");$("#check-result").hidden=true;
+  try{const response=await fetch(`/engine/api/report-issuances/${encodeURIComponent(no.trim().toUpperCase())}?code=${encodeURIComponent(code.trim())}`,{cache:"no-store"});
+    let data={};try{data=await response.json();}catch{}
+    if(!response.ok)throw new Error(apiMessage(data) || "발급 기록을 찾지 못했습니다.");
+    checkMessage("");renderIssuance(data);
+  }catch(cause){checkMessage(cause.message,{error:true});}
+}
+async function checkByFile(file){
+  if(!file)return;
+  if(!/\.pdf$/i.test(file.name) && file.type !== "application/pdf"){checkMessage("PDF 파일을 선택하세요.",{error:true});return;}
+  $("#check-result").hidden=true;
+  try{
+    if($("#check-signed").checked){
+      checkMessage("전자서명과 발급 원본을 확인하는 중입니다…");
+      const form=new FormData();form.append("file",file,file.name);
+      const response=await fetch("/engine/api/report-issuances/signed-pdf",{method:"POST",body:form});
+      let data={};try{data=await response.json();}catch{}
+      if(!response.ok)throw new Error(apiMessage(data) || "전자서명 PDF를 확인하지 못했습니다.");
+      checkMessage("");renderSigned(data);return;
+    }
+    checkMessage("PDF의 SHA-256을 계산하는 중입니다…");
+    const digest=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());
+    const pdf_sha256=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");
+    try{const data=await postJSON("/engine/api/report-issuances/lookup",{pdf_sha256});checkMessage("");renderIssuance(data,{byPdf:true});}
+    catch(cause){throw new Error(`${cause.message}${cause.status === 404 ? " 발급 후 기관 인증서로 전자서명한 PDF라면 ‘전자서명한 PDF’를 선택하고 다시 올리세요." : ""}`);}
+  }catch(cause){checkMessage(cause.message,{error:true});}
+  finally{$("#check-file").value="";}
+}
+$("#check-form").onsubmit=event=>{event.preventDefault();checkByNumber($("#check-no").value,$("#check-code").value);};
+$("#check-drop").onclick=()=>$("#check-file").click();
+$("#check-file").onchange=event=>checkByFile(event.target.files[0]);
+for(const kind of ["dragenter","dragover"])$("#check-drop").addEventListener(kind,event=>{event.preventDefault();event.currentTarget.classList.add("dragging");});
+for(const kind of ["dragleave","drop"])$("#check-drop").addEventListener(kind,event=>{event.preventDefault();event.currentTarget.classList.remove("dragging");});
+$("#check-drop").addEventListener("drop",event=>checkByFile(event.dataTransfer.files[0]));
+// QR codes on issued PDFs open #check?no=…&code=…
+function checkFromHash(){
+  const query=new URLSearchParams(location.hash.split("?")[1] || "");
+  const no=query.get("no"),code=query.get("code");
+  if(no && code){$("#check-no").value=no;$("#check-code").value=code;checkByNumber(no,code);}
+}
 $("#download-html").onclick=()=>{const item=result();if(item.report_saved !== false){location.href=`/engine/api/reports/${encodeURIComponent(item.id)}/download?format=html`;return;}const source=`<!doctype html><html lang="ko"><meta charset="utf-8"><title>PQ-C2PA 검증 보고서</title><style>body{font:16px sans-serif;max-width:900px;margin:45px auto;padding:20px;line-height:1.6}pre{overflow:auto;padding:22px;background:#f5eee4;font-size:12px}</style><h1>${esc(item.filename)} · ${esc(stateLabels[item.state] || item.state)}</h1><p>${item.processing_mode === "browser" ? "브라우저 안에서 생성한 보고서입니다. 파일은 서버로 전송되지 않았습니다." : "서버 기록을 저장하지 않은 세션에서 생성한 보고서입니다."}</p><p>출처 검증은 콘텐츠의 사실 여부를 보증하지 않습니다.</p><pre>${esc(JSON.stringify(item,null,2))}</pre></html>`;exportBlob(source,reportName(item,"html"),"text/html");};
 $("#delete-report").onclick=async()=>{const item=result();try{await responseJSON(await fetch(`/engine/api/reports/${encodeURIComponent(item.id)}`,{method:"DELETE"}));item.report_saved=false;render();toast("서버 보고서를 삭제했습니다.");}catch(cause){error(cause.message);}};
 for(const name of ["a","b"])$(`#compare-${name}`).onchange=()=>renderCompare();
@@ -650,18 +976,21 @@ function routeFromHash(){
   if(location.hash === "#devices") return "devices";
   if(location.hash === "#guide") return "guide";
   if(location.hash === "#about-c2pa") return "about";
+  if(location.hash.startsWith("#check")) return "check";
   return "verify";
 }
 function showPage(page,{preserveResult=false}={}){
   document.body.classList.toggle("show-convert",page === "convert");
   document.body.classList.toggle("show-devices",page === "devices");
   document.body.classList.toggle("show-guide",page === "guide");
+  document.body.classList.toggle("show-check",page === "check");
   if(!preserveResult)document.body.classList.remove("has-results");
   $$('[data-page]').forEach(link => {
     const active=link.dataset.page === page;
     link.classList.toggle("active",active);
     if(active)link.setAttribute("aria-current","page");else link.removeAttribute("aria-current");
   });
+  if(page === "check")checkFromHash();
   if(page === "about")requestAnimationFrame(()=>$("#about-c2pa").scrollIntoView({block:"start"}));
   else if(!preserveResult)window.scrollTo({top:0,behavior:"instant"});
 }
@@ -725,9 +1054,10 @@ async function renderConversionResult(job){
     }catch{p1Status="검사 기록을 불러오지 못함";}
   }
   const source=job.source || {},output=job.result || {};
+  rememberConversion(job);
   conversionState.resultName=String(output.filename || "pq-c2pa-result.jpg").split(/[\\/]/).pop();
   const target=$("#conversion-result");
-  target.innerHTML=`<div class="conversion-result-head"><span class="conversion-result-icon" aria-hidden="true">${trusted ? "✓" : "!"}</span><div><span class="section-label">CONVERSION RESULT</span><h2>${trusted ? "PQ 변환이 완료되었습니다" : "변환 결과를 확인해 주세요"}</h2><p>${trusted ? "새 이미지의 C2PA와 P1 서명을 검증했습니다." : "최종 신뢰 상태를 확인한 뒤 파일을 사용하세요."}</p></div></div><div class="conversion-result-grid"><div><span>기존 이미지 M0</span><strong>${esc(source.filename || "이미지")}</strong><small>기존 서명 ${source.classic_c2pa?.validation_status === "VALID" ? "확인" : "확인 필요"}</small></div><div><span>P1 양자내성 증거</span><strong>ML-DSA-65</strong><small>${esc(p1Status)}</small></div><div><span>새 이미지 M1</span><strong>${esc(output.filename || "결과 이미지")}</strong><small>최종 상태 ${trusted ? "신뢰 확인" : esc(output.trust_status || "미확인")}</small></div></div><div class="conversion-result-actions">${trusted && safeId ? `<a class="conversion-download" href="/api/v1/conversions/${identifier}/asset" download>변환 이미지 다운로드 ↓</a><button type="button" id="conversion-verify-output" data-conversion-id="${identifier}">새 이미지 다시 검증하기 →</button>` : ""}</div><p class="conversion-result-note">실험용 로컬 CA를 사용한 결과입니다. 공개 신뢰 목록의 인증이나 이미지 내용의 진실성을 보증하지 않습니다.</p>`;
+  target.innerHTML=`<div class="conversion-result-head"><span class="conversion-result-icon" aria-hidden="true">${trusted ? "✓" : "!"}</span><div><span class="section-label">CONVERSION RESULT</span><h2>${trusted ? "PQ 변환이 완료되었습니다" : "변환 결과를 확인해 주세요"}</h2><p>${trusted ? "새 이미지의 C2PA와 P1 서명을 검증했습니다." : "최종 신뢰 상태를 확인한 뒤 파일을 사용하세요."}</p></div></div><div class="conversion-result-grid"><div><span>기존 이미지 M0</span><strong>${esc(source.filename || "이미지")}</strong><small>기존 서명 ${source.classic_c2pa?.validation_status === "VALID" ? "확인" : "확인 필요"}</small></div><div><span>P1 양자내성 증거</span><strong>ML-DSA-65</strong><small>${esc(p1Status)}</small></div><div><span>새 이미지 M1</span><strong>${esc(output.filename || "결과 이미지")}</strong><small>최종 상태 ${trusted ? "신뢰 확인" : esc(output.trust_status || "미확인")}</small></div></div><div class="conversion-result-actions">${trusted && safeId ? `<a class="conversion-download" href="/api/v1/conversions/${identifier}/asset" download>변환 이미지 다운로드 ↓</a><button type="button" id="conversion-verify-output" data-conversion-id="${identifier}">새 이미지 다시 검증하기 →</button><button type="button" id="conversion-report" class="conversion-report" data-conversion-id="${identifier}">PQ 변환 보고서 받기 ↓</button>` : ""}</div><p class="conversion-result-note">실험용 로컬 CA를 사용한 결과입니다. 공개 신뢰 목록의 인증이나 이미지 내용의 진실성을 보증하지 않습니다.</p>`;
   target.hidden=false;
 }
 $("#conversion-form").onsubmit=async event=>{
@@ -749,8 +1079,9 @@ $("#conversion-form").onsubmit=async event=>{
   }
   finally{conversionState.busy=false;$("#conversion-submit").disabled=!conversionState.file;}
 };
+// Verify the converted image (M1) on the verify page; the PQ report is built from that record.
 $("#conversion-result").addEventListener("click",async event=>{
-  const button=event.target.closest("#conversion-verify-output");if(!button)return;
+  const button=event.target.closest("#conversion-verify-output,#conversion-report");if(!button)return;
   const identifier=button.dataset.conversionId;if(!/^conv_[0-9a-f]{32}$/.test(identifier))return;
   button.disabled=true;
   try{const response=await fetch(`/api/v1/conversions/${identifier}/asset`);if(!response.ok)throw new Error("변환 이미지를 불러오지 못했습니다.");
@@ -758,6 +1089,7 @@ $("#conversion-result").addEventListener("click",async event=>{
     const file=new File([blob],conversionState.resultName || `pq-c2pa-result.${type === "image/png" ? "png" : "jpg"}`,{type});
     $("#trust-profile").value="lab";updateTrustProfileNote();
     navigatePage("verify");await verifyFiles([file]);
+    if(button.id === "conversion-report" && result())openReportDialog("pq");
   }catch(cause){conversionMessage(cause.message,{failure:true});}
   finally{button.disabled=false;}
 });
@@ -790,7 +1122,7 @@ $("#ai-form").addEventListener("submit",async event=>{
   const prompt=$("#ai-prompt").value.trim();
   if(prompt.length<8){aiError("이미지 설명을 8자 이상 입력해 주세요.");$("#ai-prompt").focus();return;}
   if(!aiState.available){aiError("생성 API 키를 서버에 설정해야 합니다.");return;}
-  const button=$("#ai-generate");aiState.busy=true;button.disabled=true;button.textContent="이미지 생성 중…";aiError("");
+  const button=$("#ai-generate"),idleContent=button.innerHTML;aiState.busy=true;button.disabled=true;button.textContent="이미지 생성 중…";aiError("");
   try{
     const response=await fetch("/engine/api/ai/generate",{
       method:"POST",headers:{"Content-Type":"application/json"},
@@ -804,7 +1136,7 @@ $("#ai-form").addEventListener("submit",async event=>{
     $("#ai-preview").src=aiState.url;$("#ai-output").hidden=false;
     $("#ai-api-status").textContent="이미지가 생성되었습니다. 다운로드하거나 C2PA 검증을 시작하세요.";
   }catch(cause){aiError(cause.message);}
-  finally{aiState.busy=false;button.disabled=!aiState.available;button.textContent="✦ 이미지 생성하기";}
+  finally{aiState.busy=false;button.disabled=!aiState.available;button.innerHTML=idleContent;}
 });
 $("#ai-download").addEventListener("click",()=>{
   if(!aiState.url)return;const link=document.createElement("a");link.href=aiState.url;
