@@ -1,20 +1,39 @@
 from c2pa import Context
 
-from app.core.config import settings
+from app.core.config import PROJECT_ROOT, settings
 
 
 def create_c2pa_validation_context(
     *,
     disable_thumbnail: bool = False,
 ) -> Context:
-    root_ca_pem = settings.c2pa_trust_anchor_path.read_text(
+    trust_dir = PROJECT_ROOT / "certs" / "trust-lists"
+
+    # 공식 공개 서명자 인증서 목록
+    public_signer_pem = (
+        trust_dir / "C2PA-TRUST-LIST.pem"
+    ).read_text(encoding="utf-8")
+
+    # 공식 공개 타임스탬프 인증서 목록
+    public_tsa_pem = (
+        trust_dir / "C2PA-TSA-TRUST-LIST.pem"
+    ).read_text(encoding="utf-8")
+
+    # 기존 프로젝트 자체 CA 유지
+    project_root_pem = settings.c2pa_trust_anchor_path.read_text(
         encoding="utf-8"
     )
 
     config = {
         "version": 1,
         "trust": {
-            "user_anchors": root_ca_pem,
+            "trust_anchors": (
+                public_signer_pem.strip()
+                + "\n"
+                + public_tsa_pem.strip()
+                + "\n"
+            ),
+            "user_anchors": project_root_pem,
         },
         "verify": {
             "verify_after_reading": True,
