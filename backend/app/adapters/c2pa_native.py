@@ -34,6 +34,11 @@ def create_c2pa_validation_context(
                 + "\n"
             ),
             "user_anchors": project_root_pem,
+            "trust_config": "\n".join([
+                "1.3.6.1.4.1.62558.2.1",  # C2PA claim signing
+                "1.3.6.1.5.5.7.3.36",    # Document signing
+                "1.3.6.1.5.5.7.3.4",     # Email protection: 기존 인증서 호환
+            ]),
         },
         "verify": {
             "verify_after_reading": True,
