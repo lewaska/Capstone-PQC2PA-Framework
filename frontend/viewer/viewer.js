@@ -5,7 +5,7 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 const sizes = size => Number.isFinite(size) ? size >= 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB` : "—";
 const when = value => { const d = new Date(value); return value && !Number.isNaN(d.getTime()) ? new Intl.DateTimeFormat("ko-KR", {dateStyle:"medium", timeStyle:"short"}).format(d) : "정보 없음"; };
-const FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png","webp","tif","tiff","avif","heic","heif","gif","svg","dng","mp4","mov","avi","mp3","wav","m4a","pdf","c2pa"]);
+const FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png","webp","tif","tiff","avif","heic","heif","gif","svg","dng"]);
 const SERVER_MAX_SIZE = 500 * 1024 * 1024;
 const BROWSER_MAX_SIZE = 100 * 1024 * 1024;
 const state = { results:[], active:0, detail:"overview", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:"", explainErrors:new Map() };
@@ -33,11 +33,11 @@ const glossary = {
   "발급자":"서명자 인증서를 발급한 기관의 이름입니다. 표시된 이름은 인증서 정보이며, 해당 기관이 현재 신뢰 목록에 있는지는 검증 상태에서 따로 확인해야 합니다.",
   "인증서":"서명자의 공개키와 이름 등을 묶어 발급자가 서명한 전자 증명서입니다. 파일의 서명을 검사하는 데 쓰지만, 사진 내용의 진실이나 저작권을 보증하지 않습니다.",
   "CA":"Certificate Authority의 약자로, 인증기관을 뜻합니다. 서명자가 쓸 인증서를 발급하거나 그 인증서의 신뢰 연결을 형성합니다. CA 이름이 보이거나 자체 인증서가 있다고 해서 모든 사용자에게 공인된 것은 아닙니다.",
-  "실험용 CA 포함":"이 프로젝트의 샘플 검증에 쓰는 실험용 인증기관(CA)을 신뢰 기준에 추가합니다. 이 설정으로 샘플이 '신뢰 확인'으로 표시돼도 일반 공개 환경의 신뢰를 뜻하지 않습니다.",
-  "기본 SDK 목록":"공식 C2PA SDK의 기본 신뢰 설정으로 검사합니다. 프로젝트의 실험용 CA를 추가하지 않으므로 샘플 파일은 서명이 유효해도 '신뢰 미확인'이 될 수 있습니다.",
+  "프로젝트 CA 신뢰":"이 프로젝트의 자체 인증기관(CA)을 Trust Anchor(신뢰의 기준점)로 등록해 검사합니다. 프로젝트 CA가 발급한 인증서로 서명된 파일은 서명자를 신뢰할 수 있는 것으로 확인됩니다.",
+  "기본 SDK 목록":"공식 C2PA SDK의 기본 신뢰 설정만으로 검사합니다. 프로젝트 CA를 Trust Anchor로 쓰지 않으므로, 프로젝트 CA로 서명된 파일은 서명이 유효해도 '신뢰 미확인'으로 표시됩니다.",
   "신뢰 목록":"어떤 인증기관이나 서명자를 신뢰 기준으로 삼을지 정한 목록입니다. 같은 파일도 목록이 달라지면 '신뢰 확인'과 '신뢰 미확인'이 달라질 수 있습니다.",
-  "검증 정책":"검사에 사용하는 신뢰 기준과 네트워크 설정입니다. 이 화면에서는 기본 SDK 설정과 실험용 CA 추가 중 하나를 선택하며, 선택값은 결과에 함께 표시됩니다.",
-  "신뢰 정책":"어떤 인증기관을 신뢰 기준으로 삼을지 고르는 설정입니다. 샘플을 살펴볼 때만 실험용 CA 포함을 선택하고, 실제 파일은 기본 설정의 결과와 구분해 읽으세요.",
+  "검증 정책":"어떤 인증기관(CA)을 Trust Anchor로 삼아 서명자를 신뢰할지 정한 기준입니다. 기본값은 프로젝트 자체 CA를 Trust Anchor로 등록한 '프로젝트 CA 신뢰'이며, 이 기준으로 서명자의 인증서 체인을 확인합니다.",
+  "신뢰 정책":"어떤 인증기관을 Trust Anchor로 삼을지 고르는 설정입니다. '프로젝트 CA 신뢰'는 프로젝트 자체 CA를 Trust Anchor로 등록해 서명자를 신뢰하고, '기본 SDK 목록'은 SDK 기본 설정만 사용합니다.",
   "서명 알고리즘":"출처 기록의 디지털 서명에 사용한 암호 방식입니다. 이름 자체는 검증 결과가 아니므로 서명 통과 여부와 신뢰 상태를 함께 확인하세요.",
   "알고리즘":"출처 기록의 디지털 서명에 사용한 암호 방식입니다. 알고리즘 이름만으로 서명이 유효하거나 서명자가 신뢰된다고 판단할 수 없습니다.",
   "SDK":"Software Development Kit의 약자로, 개발자가 기능을 구현할 때 쓰는 도구 모음입니다. 이 사이트는 공식 C2PA SDK의 검증 결과를 읽기 쉽게 표시합니다.",
@@ -53,7 +53,6 @@ const glossary = {
   "GPS 메타데이터":"이미지에 기록될 수 있는 위치 정보입니다. 개인정보 보호를 위해 이 화면은 좌표를 표시하지 않습니다. 위치 정보가 있어도 실제 촬영 장소라는 증거는 아닙니다.",
   "해상도":"이미지의 가로·세로 픽셀 수입니다. 화면 크기나 선명도와 관련되지만 C2PA 신뢰 상태를 뜻하지 않습니다.",
   "색상 모드":"이미지를 표현하는 색상 방식입니다. 예를 들어 RGB나 흑백이 표시될 수 있으며 출처의 진위와는 별개입니다.",
-  "처리 방식":"파일 검증이 브라우저에서 이뤄졌는지 로컬 서버에서 이뤄졌는지 보여줍니다. 브라우저 모드는 파일을 서버에 보내지 않습니다.",
   "제작 도구":"출처 기록에 자신을 남긴 프로그램 또는 기기입니다. 기록된 도구 이름만으로 실제 제작 과정을 모두 확인할 수는 없습니다.",
   "signature_info":"선택한 Manifest의 서명자 이름, 인증서 발급자, 서명 알고리즘 등의 정보입니다. 이름과 실제 신뢰 판정은 구분해야 합니다.",
   "claim_generator":"이 출처 기록을 생성한 프로그램이나 기기 정보입니다. 파일 내용의 사실 여부를 검증하는 항목은 아닙니다.",
@@ -72,7 +71,7 @@ function term(label) {
   const description=glossary[label];
   return description ? hintText(label,description) : esc(label);
 }
-const inlineGlossaryTerms=["실험용 CA 포함","기본 SDK 목록","AI 생성 선언","원격 Manifest","ICC 프로필","GPS 메타데이터","서명 시간 정보","서명 알고리즘","디지털 서명","신뢰 목록","검증 정책","SHA3-256","SHA-256","C2PA","Manifest","Assertion","Ingredient","Claim","OCSP","TSA","EXIF","SDK","CA","무결성","메타데이터","인증서","서명자","발급자","해시"];
+const inlineGlossaryTerms=["프로젝트 CA 신뢰","기본 SDK 목록","AI 생성 선언","원격 Manifest","ICC 프로필","GPS 메타데이터","서명 시간 정보","서명 알고리즘","디지털 서명","신뢰 목록","검증 정책","SHA3-256","SHA-256","C2PA","Manifest","Assertion","Ingredient","Claim","OCSP","TSA","EXIF","SDK","CA","무결성","메타데이터","인증서","서명자","발급자","해시"];
 const inlineTermPattern=new RegExp(`(?<![A-Za-z0-9_])(${inlineGlossaryTerms.sort((a,b)=>b.length-a.length).map(value=>value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("|")})(?![A-Za-z0-9_])`,"g");
 function annotateTerms(value){return String(value ?? "").split(inlineTermPattern).map(part=>glossary[part] ? term(part) : esc(part)).join("");}
 function annotateIssuer(value){return String(value ?? "").split(/(?<![A-Za-z0-9_])(CA)(?![A-Za-z0-9_])/g).map(part=>part === "CA" ? term("CA") : esc(part)).join("");}
@@ -133,7 +132,6 @@ function updateProcessingMode() {
   $("#intake-limit").textContent = browser
     ? "한 번에 최대 10개 · 파일당 최대 100 MB"
     : "한 번에 최대 10개 · 파일당 최대 500 MB";
-  $("#header-privacy").innerHTML = browser ? '<span aria-hidden="true">♧</span> 파일은 브라우저에서만 처리됩니다' : '<span aria-hidden="true">♧</span> 브라우저 검증 모드를 선택할 수 있습니다';
   $("#privacy-note").textContent = browser
     ? "공식 C2PA 웹 SDK가 브라우저에서 파일을 검사합니다. 서버 전송·보고서 저장 없이 결과를 이 화면에서만 보여줍니다. URL 검증에는 서버 모드를 사용하세요."
     : "기본 모드에서는 로컬 FastAPI 서버가 파일을 분석합니다. 브라우저 검증을 켜면 파일이 서버로 전송되지 않습니다. URL 검증은 서버에서만 가능합니다.";
@@ -143,6 +141,7 @@ function setMode(mode) {
   if (mode === "url") $("#browser-mode").checked = false;
   updateProcessingMode();
   $("#panel-file").hidden = mode !== "file"; $("#panel-url").hidden = mode !== "url";
+  $(".intake").classList.toggle("url-mode", mode === "url");
   for (const option of ["file", "url"]) {
     const tab = $(`#tab-${option}`); tab.classList.toggle("active", option === mode);
     tab.setAttribute("aria-selected", String(option === mode));
@@ -377,8 +376,7 @@ function renderSummary(item) {
   const fields = [["서명자",signature.common_name || "정보 없음"],["발급자",signature.issuer || "정보 없음"],
     ["서명 알고리즘",signature.alg || "정보 없음"],["제작 도구",software],["AI 생성 선언",ai],
     ["Manifest",`${item.manifest_count || 0}개 ${item.embedded ? "· 파일 내장" : ""}`],
-    ["처리 방식",item.processing_mode === "browser" ? "브라우저 내부" : "로컬 서버"],
-    ["검증 정책",item.trust_profile === "lab" ? "실험용 CA 포함" : "기본 SDK 목록"]];
+    ["검증 정책",item.trust_profile === "lab" ? "프로젝트 CA 신뢰" : "기본 SDK 목록"]];
   return `<div class="summary-fields">${fields.map(([label,value])=>`<div><span>${term(label)}</span><strong>${label === "발급자" ? annotateIssuer(value) : label === "검증 정책" || label === "AI 생성 선언" ? annotateTerms(value) : esc(value)}</strong></div>`).join("")}</div><p class="small-note">검증 시각 ${when(item.created_at)}</p>`;
 }
 function renderBatch() {
@@ -664,16 +662,16 @@ $("#browser-mode").onchange=updateProcessingMode;
 function updateTrustProfileNote(){
   const selected=$("#trust-profile").value;
   $("#trust-profile-note").innerHTML=selected === "lab"
-    ? `${term("실험용 CA 포함")} · ${term("CA")}는 인증서를 발급하는 기관입니다. 이 설정은 프로젝트 샘플용 신뢰 기준을 추가하므로 실제 파일의 공인 신뢰와 구분해서 읽으세요.`
-    : `${term("기본 SDK 목록")} · ${term("CA")}는 인증서를 발급하는 기관입니다. 실험용 CA는 추가하지 않으므로 샘플의 서명이 유효해도 신뢰는 미확인일 수 있습니다.`;
+    ? `${term("프로젝트 CA 신뢰")} · 프로젝트 자체 ${term("CA")}를 Trust Anchor로 등록했습니다. 이 CA가 발급한 인증서로 서명된 파일은 서명자를 신뢰할 수 있습니다.`
+    : `${term("기본 SDK 목록")} · SDK 기본 신뢰 설정만 사용합니다. 프로젝트 ${term("CA")}로 서명된 파일은 서명이 유효해도 신뢰 미확인으로 표시됩니다.`;
 }
 $("#trust-profile").addEventListener("change",updateTrustProfileNote);
 $("#dropzone").onclick=()=>{if(!state.busy)$("#file-input").click();};
 $("#dropzone").onkeydown=event=>{if(event.key === "Enter" || event.key === " "){event.preventDefault();$("#file-input").click();}};
-$("#file-input").onchange=event=>verifyFiles(event.target.files);
+$("#file-input").onchange=event=>stageFiles(event.target.files);
 for(const kind of ["dragenter","dragover"])$("#dropzone").addEventListener(kind,event=>{event.preventDefault();$("#dropzone").classList.add("dragging");});
 for(const kind of ["dragleave","drop"])$("#dropzone").addEventListener(kind,event=>{event.preventDefault();$("#dropzone").classList.remove("dragging");});
-$("#dropzone").addEventListener("drop",event=>verifyFiles(event.dataTransfer.files));
+$("#dropzone").addEventListener("drop",event=>stageFiles(event.dataTransfer.files));
 $("#url-form").onsubmit=event=>{event.preventDefault();verifyURL($("#url-input").value.trim());};
 $$("[data-sample]").forEach(button=>button.onclick=()=>verifySample(button.dataset.sample));
 function showIntake(){navigatePage("verify");window.scrollTo({top:0,behavior:"instant"});setMode(state.mode);}
@@ -713,7 +711,7 @@ $("#ai-explanation").addEventListener("click",event=>{const button=event.target.
 $("#copy-live").onclick=()=>copy(liveURL(result()));
 $("#copy-report").onclick=()=>copy(reportURL(result().id));
 $("#download-json").onclick=()=>{const item=result();exportBlob(JSON.stringify(item,null,2),reportName(item,"json"),"application/json");};
-const REPORT_PROFILE_FIELDS={author:"#report-author",organization:"#report-organization",requester:"#report-requester",reviewer:"#report-reviewer"};
+const REPORT_PROFILE_FIELDS={applicant:"#report-applicant"};
 const REPORT_PROFILE_KEY="pq-c2pa-report-profile";
 function loadReportProfile(){
   try{const saved=JSON.parse(localStorage.getItem(REPORT_PROFILE_KEY) || "{}");for(const [key,selector] of Object.entries(REPORT_PROFILE_FIELDS))if(typeof saved[key] === "string" && !$(selector).value)$(selector).value=saved[key].slice(0,80);}catch{}
@@ -723,10 +721,9 @@ function saveReportProfile(options){
 }
 function reportOptions(){
   const value=selector=>$(selector).value.trim();
-  return {caseNumber:value("#report-case"),requester:value("#report-requester"),requestDocNo:value("#report-request-doc"),requestDate:$("#report-request-date").value,
-    author:value("#report-author"),organization:value("#report-organization"),reviewer:value("#report-reviewer"),purpose:value("#report-purpose"),
+  return {applicant:value("#report-applicant"),submitTo:value("#report-submit-to"),purpose:value("#report-purpose"),
     includePreview:$("#report-preview").checked,register:$("#report-register").checked,
-    emailToken:identityState.email?.token || null,orgCode:identityState.org?.code || null};
+    phoneToken:identityState.phone?.token || null,phone:identityState.phone ? {phone_masked:identityState.phone.phone_masked,verified_at:identityState.phone.verified_at} : null};
 }
 function syncReportMeta(){const type=$("input[name=report-type]:checked")?.value || "summary";$("#report-meta").open=type !== "summary";}
 $$("input[name=report-type]").forEach(input=>input.addEventListener("change",syncReportMeta));
@@ -775,10 +772,10 @@ function openReportDialog(preferred){
 $("#download-pdf").onclick=()=>openReportDialog();
 $("#report-close").onclick=()=>$("#report-dialog").close();
 $("#report-dialog").addEventListener("click",event=>{if(event.target === $("#report-dialog"))$("#report-dialog").close();});
-// Optional author checks without login: an institutional e-mail one-time code or an
-// organisation code issued by the administrator. The e-mail token lasts for this tab only.
-const IDENTITY_KEY="pq-c2pa-report-identity";
-const identityState={email:null,org:null};
+// Optional applicant check without login: a one-time SMS code to the applicant's mobile phone.
+// The token lasts for this tab only; the issuance record keeps the masked number and a keyed hash.
+const IDENTITY_KEY="pq-c2pa-report-phone";
+const identityState={phone:null};
 function apiMessage(data){const detail=data?.detail;return typeof detail === "string" ? detail : Array.isArray(detail) ? "입력 형식을 확인하세요." : "";}
 async function postJSON(url,body){
   const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
@@ -787,39 +784,29 @@ async function postJSON(url,body){
   return data;
 }
 function identityMessage(target,text,kind=""){const node=$(target);node.textContent=text;node.className=`identity-status${kind ? ` ${kind}` : ""}`;}
-function saveIdentity(){try{identityState.email ? sessionStorage.setItem(IDENTITY_KEY,JSON.stringify(identityState.email)) : sessionStorage.removeItem(IDENTITY_KEY);}catch{}}
+function saveIdentity(){try{identityState.phone ? sessionStorage.setItem(IDENTITY_KEY,JSON.stringify(identityState.phone)) : sessionStorage.removeItem(IDENTITY_KEY);}catch{}}
 function renderIdentity(){
-  if(identityState.email)identityMessage("#report-email-status",`확인됨 · ${identityState.email.email_masked} (${String(identityState.email.verified_at).slice(0,16).replace("T"," ")}) · 이 탭을 닫으면 다시 인증합니다`,"ok");
-  if(identityState.org)identityMessage("#report-org-status",`확인됨 · ${identityState.org.organization}`,"ok");
+  if(identityState.phone)identityMessage("#report-phone-status",`인증됨 · ${identityState.phone.phone_masked} (${String(identityState.phone.verified_at).slice(0,16).replace("T"," ")}) · 이 탭을 닫으면 다시 인증합니다`,"ok");
 }
-try{const saved=JSON.parse(sessionStorage.getItem(IDENTITY_KEY) || "null");if(saved?.token && Date.parse(saved.expires_at)>Date.now())identityState.email=saved;}catch{}
+try{const saved=JSON.parse(sessionStorage.getItem(IDENTITY_KEY) || "null");if(saved?.token && Date.parse(saved.expires_at)>Date.now())identityState.phone=saved;}catch{}
 renderIdentity();
-$("#report-email").addEventListener("input",()=>{if(identityState.email){identityState.email=null;saveIdentity();identityMessage("#report-email-status","");}});
-$("#report-org-code").addEventListener("input",()=>{identityState.org=null;identityMessage("#report-org-status","");});
-$("#report-email-send").onclick=async()=>{
-  const email=$("#report-email").value.trim(),button=$("#report-email-send");
-  if(!email){identityMessage("#report-email-status","기관 이메일을 입력하세요.","error");return;}
+$("#report-phone").addEventListener("input",()=>{if(identityState.phone){identityState.phone=null;saveIdentity();identityMessage("#report-phone-status","");}});
+$("#report-phone-send").onclick=async()=>{
+  const phone=$("#report-phone").value.trim(),button=$("#report-phone-send");
+  if(!phone){identityMessage("#report-phone-status","휴대폰 번호를 입력하세요.","error");return;}
   button.disabled=true;
-  try{const data=await postJSON("/engine/api/identity/email/start",{email});
-    $("#report-email-code-row").hidden=false;$("#report-email-code").value="";$("#report-email-code").focus();
-    identityMessage("#report-email-status",data.delivery === "server-log" ? `로컬 시험 모드: ${data.email_masked}의 확인 코드를 서버 로그에 기록했습니다. 10분 안에 입력하세요.` : `${data.email_masked}로 확인 코드를 보냈습니다. 10분 안에 입력하세요.`);
-  }catch(cause){identityMessage("#report-email-status",cause.message,"error");}
+  try{const data=await postJSON("/engine/api/identity/phone/start",{phone});
+    $("#report-phone-code-row").hidden=false;$("#report-phone-code").value="";$("#report-phone-code").focus();
+    identityMessage("#report-phone-status",data.delivery === "server-log" ? `로컬 시험 모드: ${data.phone_masked}의 인증번호를 서버 로그에 기록했습니다. 5분 안에 입력하세요.` : `${data.phone_masked}로 인증번호를 보냈습니다. 5분 안에 입력하세요.`);
+  }catch(cause){identityMessage("#report-phone-status",cause.message,"error");}
   finally{button.disabled=false;}
 };
-$("#report-email-verify").onclick=async()=>{
-  const email=$("#report-email").value.trim(),code=$("#report-email-code").value.trim(),button=$("#report-email-verify");
-  if(!/^\d{6}$/.test(code)){identityMessage("#report-email-status","메일로 받은 6자리 숫자를 입력하세요.","error");return;}
+$("#report-phone-verify").onclick=async()=>{
+  const phone=$("#report-phone").value.trim(),code=$("#report-phone-code").value.trim(),button=$("#report-phone-verify");
+  if(!/^\d{6}$/.test(code)){identityMessage("#report-phone-status","문자로 받은 6자리 숫자를 입력하세요.","error");return;}
   button.disabled=true;
-  try{identityState.email=await postJSON("/engine/api/identity/email/verify",{email,code});saveIdentity();$("#report-email-code-row").hidden=true;renderIdentity();}
-  catch(cause){identityMessage("#report-email-status",cause.message,"error");}
-  finally{button.disabled=false;}
-};
-$("#report-org-check").onclick=async()=>{
-  const code=$("#report-org-code").value.trim(),button=$("#report-org-check");
-  if(!code){identityMessage("#report-org-status","관리자에게 받은 기관 코드를 입력하세요.","error");return;}
-  button.disabled=true;
-  try{const data=await postJSON("/engine/api/identity/org-code",{code});identityState.org={code,organization:data.organization};renderIdentity();}
-  catch(cause){identityState.org=null;identityMessage("#report-org-status",cause.message,"error");}
+  try{identityState.phone=await postJSON("/engine/api/identity/phone/verify",{phone,code});saveIdentity();$("#report-phone-code-row").hidden=true;renderIdentity();}
+  catch(cause){identityMessage("#report-phone-status",cause.message,"error");}
   finally{button.disabled=false;}
 };
 
@@ -830,8 +817,7 @@ async function requestIssuance(module,item,type,options){
   try{return await postJSON("/engine/api/report-issuances",body);}
   catch(cause){
     if(cause.status === 400){
-      if(/이메일/.test(cause.message)){identityState.email=null;saveIdentity();identityMessage("#report-email-status",cause.message,"error");}
-      if(/기관 코드/.test(cause.message)){identityState.org=null;identityMessage("#report-org-status",cause.message,"error");}
+      if(/휴대폰/.test(cause.message)){identityState.phone=null;saveIdentity();identityMessage("#report-phone-status",cause.message,"error");}
       throw cause;
     }
     return {offline:true,reason:cause.status ? `발급 서버 응답 ${cause.status}` : "발급 서버에 연결하지 못함"};
@@ -851,10 +837,10 @@ $("#report-generate").onclick=async()=>{
   const button=$("#report-generate"),notice=$("#report-error");
   button.disabled=true;notice.hidden=true;
   try{
-    if($("#report-org-code").value.trim() && !identityState.org)throw new Error("기관 코드를 입력했다면 ‘확인’을 먼저 눌러 주세요.");
+    if($("#report-phone").value.trim() && !identityState.phone)throw new Error("휴대폰 번호를 입력했다면 인증을 먼저 마쳐 주세요.");
     const options=reportOptions();saveReportProfile(options);
     button.textContent="준비 중…";
-    const [module,environment,currentImageUrl]=await Promise.all([import("./pdf-report.js?v=20261103-integrated"),reportEnvironment(item),options.includePreview ? currentImageURL(item) : null]);
+    const [module,environment,currentImageUrl]=await Promise.all([import("./pdf-report.js?v=20261107-applicant"),reportEnvironment(item),options.includePreview ? currentImageURL(item) : null]);
     button.textContent="발급 번호 받는 중…";
     const issuance=options.register ? await requestIssuance(module,item,type,options) : null;
     button.textContent="PDF 만드는 중…";
@@ -863,101 +849,12 @@ $("#report-generate").onclick=async()=>{
     const sealed=registered ? await sealIssuance(issuance,bytes) : false;
     exportBlob(bytes,pdfReportName(item,type),"application/pdf");
     $("#report-dialog").close();
-    toast(registered ? (sealed ? `발급 등록을 마쳤습니다 · ${issuance.doc_no}` : "PDF는 저장했지만 진위 확인용 PDF 등록을 마치지 못했습니다.")
+    toast(registered ? (sealed ? `발급 등록을 마쳤습니다 · ${issuance.doc_no}` : "PDF는 저장했지만 발급 서버에 PDF 등록을 마치지 못했습니다.")
       : issuance?.offline ? "발급 서버에 연결하지 못해 미등록 PDF로 저장했습니다." : "미등록 PDF로 저장했습니다.");
   }catch(cause){notice.textContent=`PDF를 만들지 못했습니다: ${cause.message}`;notice.hidden=false;}
   finally{button.disabled=false;button.textContent="선택한 PDF 다운로드 ↓";}
 };
 
-// Report check page: number + code, PDF hash (file stays in the browser), or a PDF that was
-// signed afterwards with an institutional certificate (uploaded for signature verification).
-const REPORT_KIND={summary:"일반인용",submission:"경찰서 제출용",pq:"PQ 변환본",technical:"상세분석"};
-const PQ_KO={VALID:"유효",INVALID:"검증 실패",UNVERIFIED:"검사하지 못함",NOT_PRESENT:"없음"};
-const SIG_KO={VALID:["유효","check-ok"],INVALID:["서명 불일치","check-bad"],UNSIGNED:["서명 없음","check-warn"],UNVERIFIABLE:["이 서버에서 확인 불가","check-warn"]};
-const DECLARED_KO={requester:"의뢰기관",case_number:"사건번호",request_doc_no:"의뢰 공문 번호",request_date:"의뢰일",purpose:"의뢰 요청사항",author:"작성자",organization:"소속",reviewer:"검토자"};
-function checkMessage(text,{error=false}={}){$("#check-progress").hidden=error || !text;$("#check-progress").textContent=error ? "" : text;$("#check-error").hidden=!error;$("#check-error").textContent=error ? text : "";}
-function timeText(iso){const m=/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?$/.exec(String(iso || ""));return m ? `${m[1]} ${m[2]}${m[3] ? ` (UTC${m[3] === "Z" ? "+00:00" : m[3]})` : ""}` : esc(iso || "—");}
-function signatureCell(status,fingerprint){const [label,cls]=SIG_KO[status] || [status || "—","check-warn"];return `<span class="${cls}">ML-DSA-65 ${esc(label)}</span>${fingerprint ? `<br><small>서버 공개키 SHA-256 <code>${esc(fingerprint)}</code></small>` : ""}`;}
-function issuanceTable(view){
-  const record=view.record || {},file=record.file || {},res=record.result || {},id=record.identity || {},email=id.author_email || {},org=id.organization || {};
-  const rows=[
-    ["문서번호",`<code>${esc(view.doc_no)}</code>`],["보고서 종류",esc(REPORT_KIND[view.report_type] || view.report_type)],
-    ["발급 시각",`${timeText(view.issued_at)} · 발급 서버 시각`],["발급 기관",esc(record.issuer?.name || "—")],
-    ["대상 파일 SHA-256",`<code>${esc(file.sha256 || "—")}</code>`],
-    ["검증 결과",`${esc(stateLabels[res.state] || res.state || "—")} · Manifest ${Number(res.manifest_count) || 0}개 · P1 ${esc(PQ_KO[res.pq_status] || res.pq_status || "—")}${res.trust_profile === "lab" ? " · 실험용 CA 포함 기준" : ""}`],
-    ["작성자 확인",email.status === "VERIFIED" ? `<span class="check-ok">기관 이메일 인증</span> ${esc(email.email_masked)} · ${timeText(email.verified_at)}` : "확인하지 않음(보고서의 자필 서명으로 확인)"],
-    ["소속 확인",org.status === "VERIFIED" ? `<span class="check-ok">관리자 등록 기관 코드</span> ${esc(org.name)}` : "확인하지 않음"],
-    ["기재 항목",(record.declared_fields || []).length ? `${record.declared_fields.slice().sort((x,y)=>Object.keys(DECLARED_KO).indexOf(x)-Object.keys(DECLARED_KO).indexOf(y)).map(key=>esc(DECLARED_KO[key] || key)).join(", ")}<br><small>원문은 서버에 없고 SHA-256(<code>${esc(String(record.declared_sha256 || "").slice(0,16))}…</code>)으로만 등록됨 · 사실 여부는 확인하지 않음</small>` : "없음"],
-    ["발급 기록 서명",signatureCell(view.signature?.status,view.signature?.public_key_sha256)],
-    ["PDF 등록",view.pdf?.registered ? `등록됨 · ${Number(view.pdf.size).toLocaleString("ko-KR")} B · ${timeText(view.pdf.finalized_at)}<br><small>SHA-256 <code>${esc(view.pdf.sha256)}</code> · 봉인 ${signatureCell(view.pdf.seal_status)}</small>` : '<span class="check-warn">PDF가 등록되지 않음(발급 중단 또는 등록 실패)</span>'],
-  ];
-  if(view.pdf_match === true)rows.push(["PDF 대조",'<span class="check-ok">일치 · 발급 후 바뀌지 않음</span>']);
-  return `<table class="check-table"><tbody>${rows.map(([key,value])=>`<tr><th scope="row">${key}</th><td>${value}</td></tr>`).join("")}</tbody></table>`;
-}
-function checkHead(kind,title,text){const icon={ok:"✓",warn:"!",bad:"×"}[kind];return `<div class="check-head ${kind}"><span class="check-icon" aria-hidden="true">${icon}</span><div><span class="section-label">REPORT CHECK</span><h2>${esc(title)}</h2><p>${esc(text)}</p></div></div>`;}
-function renderIssuance(view,{byPdf=false}={}){
-  const sigOk=view.signature?.status === "VALID" || view.signature?.status === "UNSIGNED";
-  const kind=view.signature?.status === "INVALID" ? "bad" : byPdf ? "ok" : view.pdf?.registered ? "ok" : "warn";
-  const title=view.signature?.status === "INVALID" ? "발급 기록의 서명이 맞지 않습니다" : byPdf ? "등록된 발급 보고서와 같은 PDF입니다" : "등록된 발급 보고서입니다";
-  const text=byPdf ? "PDF의 SHA-256이 발급 때 등록된 값과 같습니다. 발급 후 바뀌지 않았습니다." : sigOk ? "문서번호와 확인번호가 일치합니다. 가지고 있는 PDF를 올리면 내용이 같은지도 대조합니다." : "서버 기록이 변경되었을 수 있습니다. 발급 기관에 문의하세요.";
-  $("#check-result").innerHTML=checkHead(kind,title,text)+issuanceTable(view);$("#check-result").hidden=false;
-}
-function renderSigned(data){
-  const sigs=data.signatures || [];
-  const good=data.original && sigs.length && sigs.every(sig=>sig.valid && sig.covers_original);
-  const head=!data.original ? checkHead("bad","등록된 발급 원본을 찾지 못했습니다","전자서명 전 원본 PDF가 이 서버의 발급 기록과 다르거나, 이 서버에서 발급한 문서가 아닙니다.")
-    : !sigs.length ? checkHead("warn","전자서명을 찾지 못했습니다","발급 원본은 그대로 들어 있지만 PDF 전자서명이 없습니다.")
-    : good ? checkHead("ok","발급 원본에 유효한 전자서명이 추가된 PDF입니다","등록된 원본이 바뀌지 않았고, 아래 인증서로 문서 전체에 서명했습니다.")
-    : checkHead("bad","전자서명 검증에 실패했습니다","서명이 맞지 않거나 원본 범위를 덮지 않습니다.");
-  const list=sigs.map((sig,i)=>{const s=sig.signer || {};return `<h3>전자서명 ${i+1}</h3><table class="check-table"><tbody>
-    <tr><th scope="row">서명 검증</th><td>${sig.valid ? '<span class="check-ok">유효</span>' : '<span class="check-bad">실패</span>'}</td></tr>
-    <tr><th scope="row">서명자</th><td>${esc(s.subject || "확인할 수 없음")}</td></tr><tr><th scope="row">발급자</th><td>${esc(s.issuer || "—")}</td></tr>
-    <tr><th scope="row">일련번호 · 유효기간</th><td><code>${esc(s.serial || "—")}</code><br>${esc(s.not_before || "")} ~ ${esc(s.not_after || "")}</td></tr>
-    <tr><th scope="row">서명 범위</th><td>${sig.covers_original ? "발급 원본 전체 포함" : '<span class="check-bad">발급 원본을 모두 덮지 않음</span>'} · ${sig.covers_whole_file ? "파일 전체" : "파일 일부"}</td></tr>
-    <tr><th scope="row">인증서 신뢰</th><td>${sig.chain === "TRUSTED" ? '<span class="check-ok">등록된 신뢰 앵커에 연결됨</span>' : sig.chain === "UNTRUSTED" ? '<span class="check-bad">등록된 신뢰 앵커에 연결되지 않음</span>' : '<span class="check-warn">신뢰 앵커 미설정 · 인증서 발급 체계는 확인하지 않음</span>'}</td></tr></tbody></table>`;}).join("");
-  $("#check-result").innerHTML=head+(data.original ? `<h3>발급 원본</h3>${issuanceTable(data.original)}` : "")+list;$("#check-result").hidden=false;
-}
-async function checkByNumber(no,code){
-  checkMessage("발급 기록을 조회하는 중입니다…");$("#check-result").hidden=true;
-  try{const response=await fetch(`/engine/api/report-issuances/${encodeURIComponent(no.trim().toUpperCase())}?code=${encodeURIComponent(code.trim())}`,{cache:"no-store"});
-    let data={};try{data=await response.json();}catch{}
-    if(!response.ok)throw new Error(apiMessage(data) || "발급 기록을 찾지 못했습니다.");
-    checkMessage("");renderIssuance(data);
-  }catch(cause){checkMessage(cause.message,{error:true});}
-}
-async function checkByFile(file){
-  if(!file)return;
-  if(!/\.pdf$/i.test(file.name) && file.type !== "application/pdf"){checkMessage("PDF 파일을 선택하세요.",{error:true});return;}
-  $("#check-result").hidden=true;
-  try{
-    if($("#check-signed").checked){
-      checkMessage("전자서명과 발급 원본을 확인하는 중입니다…");
-      const form=new FormData();form.append("file",file,file.name);
-      const response=await fetch("/engine/api/report-issuances/signed-pdf",{method:"POST",body:form});
-      let data={};try{data=await response.json();}catch{}
-      if(!response.ok)throw new Error(apiMessage(data) || "전자서명 PDF를 확인하지 못했습니다.");
-      checkMessage("");renderSigned(data);return;
-    }
-    checkMessage("PDF의 SHA-256을 계산하는 중입니다…");
-    const digest=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());
-    const pdf_sha256=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");
-    try{const data=await postJSON("/engine/api/report-issuances/lookup",{pdf_sha256});checkMessage("");renderIssuance(data,{byPdf:true});}
-    catch(cause){throw new Error(`${cause.message}${cause.status === 404 ? " 발급 후 기관 인증서로 전자서명한 PDF라면 ‘전자서명한 PDF’를 선택하고 다시 올리세요." : ""}`);}
-  }catch(cause){checkMessage(cause.message,{error:true});}
-  finally{$("#check-file").value="";}
-}
-$("#check-form").onsubmit=event=>{event.preventDefault();checkByNumber($("#check-no").value,$("#check-code").value);};
-$("#check-drop").onclick=()=>$("#check-file").click();
-$("#check-file").onchange=event=>checkByFile(event.target.files[0]);
-for(const kind of ["dragenter","dragover"])$("#check-drop").addEventListener(kind,event=>{event.preventDefault();event.currentTarget.classList.add("dragging");});
-for(const kind of ["dragleave","drop"])$("#check-drop").addEventListener(kind,event=>{event.preventDefault();event.currentTarget.classList.remove("dragging");});
-$("#check-drop").addEventListener("drop",event=>checkByFile(event.dataTransfer.files[0]));
-// QR codes on issued PDFs open #check?no=…&code=…
-function checkFromHash(){
-  const query=new URLSearchParams(location.hash.split("?")[1] || "");
-  const no=query.get("no"),code=query.get("code");
-  if(no && code){$("#check-no").value=no;$("#check-code").value=code;checkByNumber(no,code);}
-}
 $("#download-html").onclick=()=>{const item=result();if(item.report_saved !== false){location.href=`/engine/api/reports/${encodeURIComponent(item.id)}/download?format=html`;return;}const source=`<!doctype html><html lang="ko"><meta charset="utf-8"><title>PQ-C2PA 검증 보고서</title><style>body{font:16px sans-serif;max-width:900px;margin:45px auto;padding:20px;line-height:1.6}pre{overflow:auto;padding:22px;background:#f5eee4;font-size:12px}</style><h1>${esc(item.filename)} · ${esc(stateLabels[item.state] || item.state)}</h1><p>${item.processing_mode === "browser" ? "브라우저 안에서 생성한 보고서입니다. 파일은 서버로 전송되지 않았습니다." : "서버 기록을 저장하지 않은 세션에서 생성한 보고서입니다."}</p><p>출처 검증은 콘텐츠의 사실 여부를 보증하지 않습니다.</p><pre>${esc(JSON.stringify(item,null,2))}</pre></html>`;exportBlob(source,reportName(item,"html"),"text/html");};
 $("#delete-report").onclick=async()=>{const item=result();try{await responseJSON(await fetch(`/engine/api/reports/${encodeURIComponent(item.id)}`,{method:"DELETE"}));item.report_saved=false;render();toast("서버 보고서를 삭제했습니다.");}catch(cause){error(cause.message);}};
 for(const name of ["a","b"])$(`#compare-${name}`).onchange=()=>renderCompare();
@@ -973,24 +870,19 @@ else if(params.has("url")){setMode("url");$("#url-input").value=params.get("url"
 // Top navigation presents the reference material as separate pages while keeping the verifier state in memory.
 function routeFromHash(){
   if(location.hash === "#convert") return "convert";
-  if(location.hash === "#devices") return "devices";
   if(location.hash === "#guide") return "guide";
   if(location.hash === "#about-c2pa") return "about";
-  if(location.hash.startsWith("#check")) return "check";
   return "verify";
 }
 function showPage(page,{preserveResult=false}={}){
   document.body.classList.toggle("show-convert",page === "convert");
-  document.body.classList.toggle("show-devices",page === "devices");
   document.body.classList.toggle("show-guide",page === "guide");
-  document.body.classList.toggle("show-check",page === "check");
   if(!preserveResult)document.body.classList.remove("has-results");
   $$('[data-page]').forEach(link => {
     const active=link.dataset.page === page;
     link.classList.toggle("active",active);
     if(active)link.setAttribute("aria-current","page");else link.removeAttribute("aria-current");
   });
-  if(page === "check")checkFromHash();
   if(page === "about")requestAnimationFrame(()=>$("#about-c2pa").scrollIntoView({block:"start"}));
   else if(!preserveResult)window.scrollTo({top:0,behavior:"instant"});
 }
@@ -1148,3 +1040,83 @@ $("#ai-verify").addEventListener("click",()=>{
   closeAiDialog();navigatePage("verify");verifyFiles([file]);
 });
 window.addEventListener("beforeunload",()=>{if(aiState.url)URL.revokeObjectURL(aiState.url);});
+
+// Pre-analysis preview: nothing is uploaded or stored until the user confirms.
+// Duplicates of results already in this session are skipped to avoid redundant server records.
+const PREVIEW_HASH_LIMIT = 50 * 1024 * 1024;
+const pendingState={items:[]};
+async function fileSha256(file){
+  if(!globalThis.crypto?.subtle || file.size > PREVIEW_HASH_LIMIT)return "";
+  const digest=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map(byte=>byte.toString(16).padStart(2,"0")).join("");
+}
+function clearPending(){
+  for(const entry of pendingState.items)if(entry.url)URL.revokeObjectURL(entry.url);
+  pendingState.items=[];
+  $("#upload-preview").hidden=true;$("#panel-file").classList.remove("has-pending");
+}
+async function stageFiles(files){
+  if(state.busy)return;
+  clearError();
+  const incoming=[...files];$("#file-input").value="";
+  if(!incoming.length)return;
+  const analyzed=new Set(state.results.map(item=>item.sha256).filter(Boolean));
+  for(const file of incoming){
+    const suffix=file.name.split(".").pop()?.toLowerCase();
+    const entry={file,id:`${Date.now()}_${Math.random().toString(16).slice(2)}`,url:"",problem:"",duplicate:false,dimensions:"",hash:""};
+    if(!FORMAT_EXTENSIONS.has(suffix) && !(file.type || "").startsWith("image/"))entry.problem="이미지 파일만 분석할 수 있습니다.";
+    else if(file.size > ($("#browser-mode").checked ? BROWSER_MAX_SIZE : SERVER_MAX_SIZE))entry.problem="파일 크기 제한을 넘었습니다.";
+    else entry.url=URL.createObjectURL(file);
+    pendingState.items.push(entry);
+  }
+  if(pendingState.items.length > 10){
+    pendingState.items.splice(10).forEach(entry=>entry.url && URL.revokeObjectURL(entry.url));
+    toast("한 번에 최대 10장까지 미리 볼 수 있습니다.");
+  }
+  renderPending();
+  $("#upload-preview").scrollIntoView({block:"nearest",behavior:"smooth"});
+  await Promise.all(pendingState.items.filter(entry=>!entry.hash && !entry.problem).map(async entry=>{
+    try{entry.hash=await fileSha256(entry.file);}catch{entry.hash="";}
+    const seen=pendingState.items.some(other=>other !== entry && other.hash && other.hash === entry.hash && pendingState.items.indexOf(other) < pendingState.items.indexOf(entry));
+    entry.duplicate=Boolean(entry.hash) && (analyzed.has(entry.hash) || seen);
+  }));
+  renderPending();
+}
+function renderPending(){
+  const items=pendingState.items;
+  if(!items.length){clearPending();return;}
+  $("#upload-preview").hidden=false;$("#panel-file").classList.add("has-pending");
+  const ready=items.filter(entry=>!entry.problem && !entry.duplicate);
+  $("#upload-preview-count").textContent=`${ready.length} / ${items.length}장 분석 예정`;
+  $("#upload-preview-list").innerHTML=items.map(entry=>{
+    const flag=entry.problem ? `<b class="flag bad">${esc(entry.problem)}</b>` : entry.duplicate ? `<b class="flag dup">이미 분석한 사진 · 건너뜀</b>` : `<b class="flag ok">분석 대상</b>`;
+    const media=entry.url ? `<img src="${esc(entry.url)}" alt="${esc(entry.file.name)} 미리보기" data-pending-img="${esc(entry.id)}">` : `<span class="no-thumb" aria-hidden="true">◇</span>`;
+    return `<li class="${entry.problem || entry.duplicate ? "skipped" : ""}"><div class="thumb">${media}</div><div class="meta"><strong title="${esc(entry.file.name)}">${esc(entry.file.name)}</strong><small>${sizes(entry.file.size)}${entry.dimensions ? ` · ${esc(entry.dimensions)}` : ""}${entry.file.type ? ` · ${esc(entry.file.type.replace("image/","").toUpperCase())}` : ""}</small>${flag}</div><button type="button" class="remove" data-pending-remove="${esc(entry.id)}" aria-label="${esc(entry.file.name)} 빼기">×</button></li>`;
+  }).join("");
+  const skipped=items.length-ready.length, note=$("#upload-preview-note");
+  note.hidden=!skipped;
+  note.textContent=skipped ? `${skipped}장은 분석하지 않습니다. 같은 사진을 다시 분석하지 않아 서버 기록이 중복 저장되지 않습니다.` : "";
+  const start=$("#upload-preview-start");
+  start.disabled=!ready.length || state.busy;
+  start.textContent=ready.length ? `${ready.length}장 분석 시작 →` : "분석할 사진이 없습니다";
+  $$("[data-pending-img]").forEach(img=>img.addEventListener("load",()=>{
+    const entry=pendingState.items.find(item=>item.id === img.dataset.pendingImg);
+    if(entry && !entry.dimensions && img.naturalWidth){entry.dimensions=`${img.naturalWidth}×${img.naturalHeight}`;const small=img.closest("li")?.querySelector("small");if(small)small.textContent=`${sizes(entry.file.size)} · ${entry.dimensions}${entry.file.type ? ` · ${entry.file.type.replace("image/","").toUpperCase()}` : ""}`;}
+  },{once:true}));
+}
+$("#upload-preview-list").addEventListener("click",event=>{
+  const button=event.target.closest("[data-pending-remove]");if(!button)return;
+  const index=pendingState.items.findIndex(entry=>entry.id === button.dataset.pendingRemove);
+  if(index < 0)return;
+  const [entry]=pendingState.items.splice(index,1);if(entry.url)URL.revokeObjectURL(entry.url);
+  renderPending();
+});
+$("#upload-preview-cancel").addEventListener("click",()=>{clearPending();$("#dropzone").focus();});
+$("#upload-preview-add").addEventListener("click",()=>{if(!state.busy)$("#file-input").click();});
+$("#upload-preview-start").addEventListener("click",async()=>{
+  const ready=pendingState.items.filter(entry=>!entry.problem && !entry.duplicate).map(entry=>entry.file);
+  if(!ready.length)return;
+  clearPending();
+  await verifyFiles(ready);
+});
+
