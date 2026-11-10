@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
 
     openssl_bin: str = (
         r"C:\Program Files\FireDaemon OpenSSL 3.5\bin\openssl.exe"
+        if os.name == "nt" else "openssl"
     )
 
     mldsa_private_key_path: Path = (
@@ -101,7 +103,7 @@ class Settings(BaseSettings):
         / "pqc2pa-cli"
         / "target"
         / "debug"
-        / "pqc2pa-cli.exe"
+        / ("pqc2pa-cli.exe" if os.name == "nt" else "pqc2pa-cli")
     )
 
     conversion_storage_path: Path = (

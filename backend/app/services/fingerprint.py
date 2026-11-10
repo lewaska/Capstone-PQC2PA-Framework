@@ -7,6 +7,7 @@ builders. Do not calculate the two manifest fingerprints independently.
 from __future__ import annotations
 
 import base64
+from importlib.metadata import version
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,8 @@ class SoftBindingFingerprint:
     units: tuple[str, ...]
     value: bytes
     algorithm: str = SOFT_BINDING_ALGORITHM
+    generator_name: str | None = None
+    generator_version: str | None = None
 
     @property
     def value_base64(self) -> str:
@@ -47,23 +50,32 @@ class SoftBindingFingerprint:
     def assertion_definition(self) -> dict[str, Any]:
         """Return a c2pa-rs/c2pa-python manifest assertion definition.
 
-        The integer list is the JSON representation accepted by c2pa-rs.
-        Current c2pa-rs versions serialize it as the CBOR byte string required
-        by IEP-0020; older readers may expose the value as an integer list.
+        The integer list is the JSON manifest-definition form accepted by the
+        current SDK. Reader reports may expose the stored value as an integer
+        list or as base64 text; both are decoded by the preparation service.
         """
+
+        data: dict[str, Any] = {
+            "alg": self.algorithm,
+            "blocks": [
+                {
+                    "scope": {},
+                    "value": list(self.value),
+                }
+            ],
+        }
+        if self.generator_name and self.generator_version:
+            data["bindingMetadata"] = {
+                "io.iscc.generator": {
+                    "name": self.generator_name,
+                    "version": self.generator_version,
+                }
+            }
 
         return {
             "label": SOFT_BINDING_LABEL,
             "created": True,
-            "data": {
-                "alg": self.algorithm,
-                "blocks": [
-                    {
-                        "scope": {},
-                        "value": list(self.value),
-                    }
-                ],
-            },
+            "data": data,
         }
 
     def as_dict(self) -> dict[str, Any]:
@@ -108,7 +120,12 @@ def generate_image_fingerprint(image_path: Path) -> SoftBindingFingerprint:
         if tuple(ic.decode_seq(value)) != units:
             raise ValueError("생성한 ISCC-SEQ를 다시 해석할 수 없습니다.")
 
-        return SoftBindingFingerprint(units=units, value=value)
+        return SoftBindingFingerprint(
+            units=units,
+            value=value,
+            generator_name="iscc-sdk",
+            generator_version=version("iscc-sdk"),
+        )
     except FingerprintGenerationError:
         raise
     except Exception as exc:

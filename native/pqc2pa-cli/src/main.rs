@@ -46,6 +46,15 @@ enum Command {
         #[arg(long)]
         token: PathBuf,
     },
+
+    /// 이미지에서 전체 Classic Manifest Store 원본을 추출한다.
+    ExportStore {
+        #[arg(long)]
+        input: PathBuf,
+
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -66,6 +75,19 @@ fn main() -> Result<()> {
             token,
         } => {
             attach_timestamp::attach_timestamp(&input, &output, &token)?;
+        }
+
+        Command::ExportStore { input, output } => {
+            let bytes = c2pa::jumbf_io::load_jumbf_from_file(&input)?;
+
+            // 기존 파일은 덮어쓰지 않는다.
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output)?;
+
+            use std::io::Write;
+            file.write_all(&bytes)?;
         }
     }
 
