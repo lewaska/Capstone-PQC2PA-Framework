@@ -1087,7 +1087,7 @@ async function verifyBrowserAsset(file, trustProfile = "standard") {
       for (const assertion of active.assertions || [])
         if (assertion.label?.startsWith("c2pa.actions"))
           result.actions.push(...assertion.data?.actions || []);
-      if (result.actions.some((action) => /trainedAlgorithmicMedia|compositeWithTrainedAlgorithmicMedia|algorithmicallyEnhanced$/.test(action.digitalSourceType || "")))
+      if (result.actions.some((action) => /(?:^|[\/#])(?:trainedAlgorithmicMedia|compositeWithTrainedAlgorithmicMedia|compositedWithTrainedAlgorithmicMedia)$/.test(action.digitalSourceType || "")))
         result.ai = "declared";
       let budget = 4 * 1024 * 1024;
       for (const [label, manifest] of Object.entries(manifests).slice(0, 12)) {

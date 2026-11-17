@@ -5,10 +5,13 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 const sizes = size => Number.isFinite(size) ? size >= 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB` : "—";
 const when = value => { const d = new Date(value); return value && !Number.isNaN(d.getTime()) ? new Intl.DateTimeFormat("ko-KR", {dateStyle:"medium", timeStyle:"short"}).format(d) : "정보 없음"; };
-const FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png","webp","tif","tiff","avif","heic","heif","gif","svg","dng"]);
+const FORMAT_EXTENSIONS = new Set(["jpg","jpeg","png"]);
 const SERVER_MAX_SIZE = 500 * 1024 * 1024;
 const BROWSER_MAX_SIZE = 100 * 1024 * 1024;
-const state = { results:[], active:0, detail:"overview", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:"", explainErrors:new Map() };
+const state = { results:[], active:0, detail:"pqc", checkFilter:"all", selectedManifest:null, localUrls:new Map(), busy:false, mode:"file", explanations:new Map(), explainMode:"simple", explainBusy:"", explainErrors:new Map() };
+let v4Module=null;
+const unifiedTasks=new Map();
+let activeUnifiedTask=null;
 const stateLabels = {Trusted:"신뢰 확인", Valid:"유효 · 신뢰 미확인", Invalid:"검증 실패", NoManifest:"C2PA 없음", RemoteUnavailable:"외부 Manifest 필요", Error:"분석 오류", Unknown:"상태 미확인"};
 const stateDescriptions = {
   Trusted:"서명과 파일 결합이 검증되고, 선택한 신뢰 목록에서 서명자를 확인했습니다.",
@@ -33,11 +36,11 @@ const glossary = {
   "발급자":"서명자 인증서를 발급한 기관의 이름입니다. 표시된 이름은 인증서 정보이며, 해당 기관이 현재 신뢰 목록에 있는지는 검증 상태에서 따로 확인해야 합니다.",
   "인증서":"서명자의 공개키와 이름 등을 묶어 발급자가 서명한 전자 증명서입니다. 파일의 서명을 검사하는 데 쓰지만, 사진 내용의 진실이나 저작권을 보증하지 않습니다.",
   "CA":"Certificate Authority의 약자로, 인증기관을 뜻합니다. 서명자가 쓸 인증서를 발급하거나 그 인증서의 신뢰 연결을 형성합니다. CA 이름이 보이거나 자체 인증서가 있다고 해서 모든 사용자에게 공인된 것은 아닙니다.",
-  "프로젝트 CA 신뢰":"이 프로젝트의 자체 인증기관(CA)을 Trust Anchor(신뢰의 기준점)로 등록해 검사합니다. 프로젝트 CA가 발급한 인증서로 서명된 파일은 서명자를 신뢰할 수 있는 것으로 확인됩니다.",
-  "기본 SDK 목록":"공식 C2PA SDK의 기본 신뢰 설정만으로 검사합니다. 프로젝트 CA를 Trust Anchor로 쓰지 않으므로, 프로젝트 CA로 서명된 파일은 서명이 유효해도 '신뢰 미확인'으로 표시됩니다.",
+  "자체 CA 신뢰":"자체 인증기관(CA)을 Trust Anchor(신뢰의 기준점)로 등록해 검사합니다. 자체 CA가 발급한 인증서로 서명된 파일은 서명자를 신뢰할 수 있는 것으로 확인됩니다.",
+  "기본 SDK 목록":"공식 C2PA SDK의 기본 신뢰 설정만으로 검사합니다. 자체 CA를 Trust Anchor로 쓰지 않으므로, 자체 CA로 서명된 파일은 서명이 유효해도 '신뢰 미확인'으로 표시됩니다.",
   "신뢰 목록":"어떤 인증기관이나 서명자를 신뢰 기준으로 삼을지 정한 목록입니다. 같은 파일도 목록이 달라지면 '신뢰 확인'과 '신뢰 미확인'이 달라질 수 있습니다.",
-  "검증 정책":"어떤 인증기관(CA)을 Trust Anchor로 삼아 서명자를 신뢰할지 정한 기준입니다. 기본값은 프로젝트 자체 CA를 Trust Anchor로 등록한 '프로젝트 CA 신뢰'이며, 이 기준으로 서명자의 인증서 체인을 확인합니다.",
-  "신뢰 정책":"어떤 인증기관을 Trust Anchor로 삼을지 고르는 설정입니다. '프로젝트 CA 신뢰'는 프로젝트 자체 CA를 Trust Anchor로 등록해 서명자를 신뢰하고, '기본 SDK 목록'은 SDK 기본 설정만 사용합니다.",
+  "검증 정책":"어떤 인증기관(CA)을 Trust Anchor로 삼아 서명자를 신뢰할지 정한 기준입니다. 기본값은 자체 CA를 Trust Anchor로 등록한 '자체 CA 신뢰'이며, 이 기준으로 서명자의 인증서 체인을 확인합니다.",
+  "신뢰 정책":"어떤 인증기관을 Trust Anchor로 삼을지 고르는 설정입니다. '자체 CA 신뢰'는 자체 CA를 Trust Anchor로 등록해 서명자를 신뢰하고, '기본 SDK 목록'은 SDK 기본 설정만 사용합니다.",
   "서명 알고리즘":"출처 기록의 디지털 서명에 사용한 암호 방식입니다. 이름 자체는 검증 결과가 아니므로 서명 통과 여부와 신뢰 상태를 함께 확인하세요.",
   "알고리즘":"출처 기록의 디지털 서명에 사용한 암호 방식입니다. 알고리즘 이름만으로 서명이 유효하거나 서명자가 신뢰된다고 판단할 수 없습니다.",
   "SDK":"Software Development Kit의 약자로, 개발자가 기능을 구현할 때 쓰는 도구 모음입니다. 이 사이트는 공식 C2PA SDK의 검증 결과를 읽기 쉽게 표시합니다.",
@@ -71,7 +74,7 @@ function term(label) {
   const description=glossary[label];
   return description ? hintText(label,description) : esc(label);
 }
-const inlineGlossaryTerms=["프로젝트 CA 신뢰","기본 SDK 목록","AI 생성 선언","원격 Manifest","ICC 프로필","GPS 메타데이터","서명 시간 정보","서명 알고리즘","디지털 서명","신뢰 목록","검증 정책","SHA3-256","SHA-256","C2PA","Manifest","Assertion","Ingredient","Claim","OCSP","TSA","EXIF","SDK","CA","무결성","메타데이터","인증서","서명자","발급자","해시"];
+const inlineGlossaryTerms=["자체 CA 신뢰","기본 SDK 목록","AI 생성 선언","원격 Manifest","ICC 프로필","GPS 메타데이터","서명 시간 정보","서명 알고리즘","디지털 서명","신뢰 목록","검증 정책","SHA3-256","SHA-256","C2PA","Manifest","Assertion","Ingredient","Claim","OCSP","TSA","EXIF","SDK","CA","무결성","메타데이터","인증서","서명자","발급자","해시"];
 const inlineTermPattern=new RegExp(`(?<![A-Za-z0-9_])(${inlineGlossaryTerms.sort((a,b)=>b.length-a.length).map(value=>value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("|")})(?![A-Za-z0-9_])`,"g");
 function annotateTerms(value){return String(value ?? "").split(inlineTermPattern).map(part=>glossary[part] ? term(part) : esc(part)).join("");}
 function annotateIssuer(value){return String(value ?? "").split(/(?<![A-Za-z0-9_])(CA)(?![A-Za-z0-9_])/g).map(part=>part === "CA" ? term("CA") : esc(part)).join("");}
@@ -106,39 +109,29 @@ function progress(message, visible = true) {
   const target = $("#progress"); target.hidden = !visible; target.innerHTML = visible ? `<span class="spinner" aria-hidden="true"></span>${esc(message)}` : "";
   $("#dropzone").setAttribute("aria-busy", String(visible));
 }
-function startActivity(message) {
-  $("#activity-items").replaceChildren();
-  $("#activity-log").hidden = false;
-  logActivity(message);
+let liveActivity=[];
+function activityTime(value){
+  const d=new Date(value);if(!value||Number.isNaN(d.getTime()))return "시각 기록 없음";
+  return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',fractionalSecondDigits:3,hour12:false}).format(d)+' (UTC+09:00)';
 }
-function logActivity(message) {
-  const item = document.createElement("li");
-  item.textContent = `${new Date().toLocaleTimeString("ko-KR")} · ${message}`;
-  $("#activity-items").append(item);
+function renderActivity(item=null,entries=null,label=''){
+  const run=item?.verification_run,timing=item?.verification_timing;
+  const events=entries||run?.events||(timing?[{at:timing.started_at,message:'서버 C2PA 검사 시작',clock_source:'server'},{at:timing.completed_at,message:'서버 C2PA 검사 종료',clock_source:'server'}]:[]);
+  $('#activity-log').hidden=!events.length;
+  $('#activity-context').textContent=label|| (item ? `${item.filename} · 이 파일의 검사 기록${run?.started_at ? ` · 시작 ${activityTime(run.started_at)}`:''}` : '');
+  $('#activity-items').innerHTML=events.map(e=>`<li><time datetime="${esc(e.at)}">${esc(activityTime(e.at))}${e.clock_source==='server'?' · 서버':''}</time><div><strong>${esc(e.message)}</strong>${e.filename?`<small>${esc(e.filename)}</small>`:''}${e.server_timing?`<small>서버 C2PA 검사: ${esc(activityTime(e.server_timing.started_at))} ~ ${esc(activityTime(e.server_timing.completed_at))}</small>`:''}${e.job_id?`<small>작업 ID ${esc(e.job_id)}</small>`:''}</div></li>`).join('');
 }
-function setBusy(value) {
-  state.busy = value;
-  $("#url-form button").disabled = value;
-  $$("[data-sample]").forEach(button => button.disabled = value);
-  $("#trust-profile").disabled = value;
-  $("#private-mode").disabled = value || $("#browser-mode").checked;
-  $("#browser-mode").disabled = value || state.mode === "url";
+function startActivity(message){liveActivity=[];logActivity(message);}
+function logActivity(message){liveActivity.push({at:new Date().toISOString(),clock_source:'browser',code:'VIEWER_EVENT',message});renderActivity(null,liveActivity,'현재 실행 중인 검사');}
+function setBusy(value){
+  state.busy=value;$('#url-form button').disabled=value;
+  $$('[data-sample]').forEach(button=>button.disabled=value);
 }
-function updateProcessingMode() {
-  const browser = $("#browser-mode").checked;
-  if (browser) $("#private-mode").checked = true;
-  $("#private-mode").disabled = browser || state.busy;
-  $("#browser-mode").disabled = state.mode === "url" || state.busy;
-  $("#intake-limit").textContent = browser
-    ? "한 번에 최대 10개 · 파일당 최대 100 MB"
-    : "한 번에 최대 10개 · 파일당 최대 500 MB";
-  $("#privacy-note").textContent = browser
-    ? "공식 C2PA 웹 SDK가 브라우저에서 파일을 검사합니다. 서버 전송·보고서 저장 없이 결과를 이 화면에서만 보여줍니다. URL 검증에는 서버 모드를 사용하세요."
-    : "기본 모드에서는 로컬 FastAPI 서버가 파일을 분석합니다. 브라우저 검증을 켜면 파일이 서버로 전송되지 않습니다. URL 검증은 서버에서만 가능합니다.";
+function updateProcessingMode(){
+  $('#intake-limit').textContent='자동 미리보기 · 최대 10개 · PQC 처리 20 MiB 이하';
 }
 function setMode(mode) {
   state.mode = mode;
-  if (mode === "url") $("#browser-mode").checked = false;
   updateProcessingMode();
   $("#panel-file").hidden = mode !== "file"; $("#panel-url").hidden = mode !== "url";
   $(".intake").classList.toggle("url-mode", mode === "url");
@@ -181,14 +174,16 @@ function normalizeInspectResult(raw, file, trustProfile, elapsedMs) {
   const actions = [];
   for (const assertion of active.assertions || [])
     if (assertion.label?.startsWith("c2pa.actions")) actions.push(...(assertion.data?.actions || []));
-  const aiDeclared = actions.some(action => /trainedAlgorithmicMedia|compositeWithTrainedAlgorithmicMedia|algorithmicallyEnhanced$/.test(action.digitalSourceType || ""));
+  const aiDeclared = actions.some(action => isAiSourceType(action.digitalSourceType));
   return {
     ...raw,
     id:raw.id || `server_${resultId.replaceAll("-", "")}`,
-    created_at:raw.created_at || new Date().toISOString(),
-    filename:raw.filename || file.name || "asset",
-    size:raw.size ?? file.size,
-    mime:raw.content_type || raw.mime || file.type || "",
+    sha256:raw.sha256 || raw.asset?.sha256 || null,
+    sha3_256:raw.sha3_256 || raw.asset?.sha3_256 || null,
+    created_at:raw.created_at || raw.verification_timing?.completed_at || null,
+    filename:raw.filename || raw.asset?.filename || file.name || "asset",
+    size:raw.size ?? raw.asset?.size_bytes ?? file.size,
+    mime:raw.content_type || raw.mime || raw.asset?.media_type || file.type || "",
     trust_profile:raw.trust_profile || trustProfile,
     report_saved:raw.report_saved === true,
     processing_mode:"server",
@@ -205,52 +200,72 @@ function normalizeInspectResult(raw, file, trustProfile, elapsedMs) {
     thumbnail:raw.thumbnail || null,
     manifest_thumbnails:raw.manifest_thumbnails || {},
     network_policy:raw.network_policy || {remote_manifests:false, ocsp:false},
-    elapsed_ms:raw.elapsed_ms ?? elapsedMs
+    elapsed_ms:raw.elapsed_ms ?? raw.verification_timing?.elapsed_ms ?? null,
+    request_elapsed_ms:elapsedMs
   };
 }
 function addResult(result, file) {
   if (file) state.localUrls.set(result.id, URL.createObjectURL(file));
   state.results.push(result); state.active = state.results.length - 1;
-  state.detail = "overview"; state.selectedManifest = result.store?.active_manifest || null;
+  state.detail = "pqc"; state.selectedManifest = result.store?.active_manifest || null;
   showPage("verify", {preserveResult:true});
   render();
   window.scrollTo({top:0, behavior:"instant"});
 }
-async function verifyFiles(files) {
-  if (state.busy) return;
-  const list = [...files]; if (!list.length) return;
-  if (list.length > 10) return error("한 번에 최대 10개 파일을 선택할 수 있습니다.");
-  clearError(); setBusy(true); startActivity(`${list.length}개 파일 검증 시작`);
-  const failures = [];
+async function ensureAssetSha256(item, file) {
+  if (/^[0-9a-f]{64}$/i.test(String(item.sha256 || ""))) return;
   try {
-    for (const [index, file] of list.entries()) {
-      progress(`${index + 1}/${list.length} · ${file.name}의 서명과 출처를 확인하고 있습니다.`);
-      logActivity(`${file.name} · ${$("#browser-mode").checked ? "브라우저" : "서버"} 검증 중`);
-      const suffix = file.name.split(".").pop()?.toLowerCase();
-      const browser = $("#browser-mode").checked;
-      const maxSize = browser ? BROWSER_MAX_SIZE : SERVER_MAX_SIZE;
-      if (!FORMAT_EXTENSIONS.has(suffix)) { failures.push(`${file.name}: 지원하지 않는 형식입니다.`); logActivity(`${file.name} · 지원하지 않는 형식`); continue; }
-      if (file.size > maxSize) { failures.push(`${file.name}: ${browser ? 100 : 500} MB 이하만 허용합니다.`); logActivity(`${file.name} · 크기 제한 초과`); continue; }
-      try {
-        let result;
-        if (browser) {
-          const {verifyBrowserAsset} = await import("./browser-verify.js");
-          result = await verifyBrowserAsset(file, $("#trust-profile").value);
-        } else {
-          const body = new FormData(); body.append("file", file, file.name);
-          body.append("trust_profile", $("#trust-profile").value);
-          body.append("save_report", String(!$("#private-mode").checked));
-          const started = performance.now();
-          const inspected = await responseJSON(await fetch("/api/v1/assets/inspect", {method:"POST", body}));
-          result = normalizeInspectResult(inspected, file, $("#trust-profile").value, Math.round(performance.now() - started));
-        }
-        addResult(result, file);
-        logActivity(`${file.name} · ${stateLabels[result.state] || result.state} · ${result.elapsed_ms || 0} ms`);
-      } catch (cause) { failures.push(`${file.name}: ${cause.message}`); logActivity(`${file.name} · 분석 오류`); }
+    const digest=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());
+    item.sha256=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");
+  } catch { item.sha256=null;item.sha256_error="파일 해시를 계산하지 못했습니다."; }
+}
+async function inspectUnifiedFile(file,{browser=false,trustProfile='lab',saveReport=false}={}){
+  let item;
+  if(browser){const {verifyBrowserAsset}=await import('./browser-verify.js');item=await verifyBrowserAsset(file,trustProfile);}
+  else{
+    const body=new FormData();body.append('file',file,file.name);body.append('trust_profile',trustProfile);body.append('save_report',String(saveReport));
+    const started=performance.now();
+    item=normalizeInspectResult(await responseJSON(await fetch('/api/v1/assets/inspect',{method:'POST',body})),file,trustProfile,Math.round(performance.now()-started));
+  }
+  await ensureAssetSha256(item,file);return item;
+}
+function unifiedProgress(snapshot){
+  const job=snapshot.job;
+  $('#unified-stop').hidden=!snapshot.busy||!job||['COMPLETED','FAILED'].includes(job.status);
+  if(job && !['COMPLETED','FAILED'].includes(job.status))progress(`C2PA·PQC 통합 검사 · ${job.stage||'기존 기록 확인 및 보호 처리 중'}`);
+}
+async function verifyFiles(files) {
+  if(state.busy)return;
+  const list=[...files];if(!list.length)return;
+  if(list.length>10)return error('한 번에 최대 10개 파일을 선택할 수 있습니다.');
+  clearError();setBusy(true);startActivity(`${list.length}개 이미지 통합 검사 시작`);
+  const failures=[];
+  try{
+    for(const [index,file] of list.entries()){
+      const browser=false,trustProfile='lab';
+      const suffix=file.name.split('.').pop()?.toLowerCase();
+      if(!FORMAT_EXTENSIONS.has(suffix)||!file.size||file.size>(browser?BROWSER_MAX_SIZE:SERVER_MAX_SIZE)){failures.push(`${file.name}: 지원하는 JPG·PNG 형식과 용량을 확인해 주세요.`);continue;}
+      progress(`${index+1}/${list.length} · ${file.name}의 C2PA와 PQC를 함께 확인하고 있습니다.`);
+      try{
+        const {createUnifiedTask}=await unifiedReady;
+        const skipReason=file.size>20*1024*1024?'PQC 자동 처리는 20 MiB 이하 파일만 지원합니다. 이 파일의 C2PA 검사는 별도로 수행했습니다.':'';
+        const fileEvents=[];
+        const task=createUnifiedTask({inspect:asset=>inspectUnifiedFile(asset,{browser,trustProfile,saveReport:false}),loadAsset:async job=>{const blob=await v4Asset(job);return new File([blob],job.result.filename,{type:blob.type});},onProgress:unifiedProgress,onEvent:entry=>{fileEvents.push(entry);renderActivity(null,fileEvents,`${file.name} · 현재 실행 중인 검사`);},skipReason});
+        activeUnifiedTask=task;
+        const processed=await task.start(file);
+        if(!processed.item.id)processed.item.id=`unified_${crypto.randomUUID().replaceAll('-','')}`;
+        processed.item.report_saved=false;
+        unifiedTasks.set(processed.item.id,task);addResult(processed.item,processed.file);
+        renderActivity(processed.item);
+      }catch(cause){failures.push(`${file.name}: ${cause.message}`);}
+      finally{activeUnifiedTask=null;$('#unified-stop').hidden=true;}
     }
-  } finally { setBusy(false); progress("", false); $("#file-input").value = ""; updateProcessingMode(); }
-  if (failures.length) error(failures.join(" / "));
-  logActivity(`완료 · ${list.length - failures.length}개 결과, ${failures.length}개 오류`);
+  }finally{setBusy(false);progress('',false);$('#file-input').value='';updateProcessingMode();}
+  if(failures.length)error(failures.join(' / '));
+}
+function intakeFiles(files){
+  const list=[...files];
+  return stageFiles(list);
 }
 function validRemote(raw) {
   let url;
@@ -267,8 +282,9 @@ async function verifyURL(raw) {
   try {
     const result = await responseJSON(await fetch("/engine/api/verify-url", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({url, trust_profile:$("#trust-profile").value, save_report:!$("#private-mode").checked})
+      body:JSON.stringify({url, trust_profile:"lab", save_report:false})
     }));
+    result.pqc_process={status:"SKIPPED",message:"URL에서는 C2PA만 검사했습니다. PQC 자동 보호는 원본 이미지 파일을 업로드해 진행하세요."};
     addResult(result);
     logActivity(`${result.filename || "원격 파일"} · ${stateLabels[result.state] || result.state}`);
     if (result.report_saved) {
@@ -280,29 +296,92 @@ async function verifyURL(raw) {
   } catch (cause) { error(cause.message); logActivity(`분석 오류 · ${cause.message}`); }
   finally { setBusy(false); progress("", false); }
 }
-async function verifySample(sample) {
-  if (state.busy) return;
-  clearError(); setBusy(true); startActivity(`${sample} 샘플 검증 시작`); progress("실제 C2PA 샘플을 검증하고 있습니다.");
-  try {
-    if ($("#browser-mode").checked) {
-      const names = {signed:"signed.jpg",tampered:"tampered.jpg",unsigned:"unsigned.jpg",ai:"ai-han-river-sunrise.png"};
-      const response = await fetch(`/engine/api/samples/${encodeURIComponent(sample)}/file`);
-      if (!response.ok) throw new Error("샘플 파일을 불러오지 못했습니다.");
-      const blob = await response.blob();
-      const file = new File([blob], names[sample] || `${sample}.jpg`, {type:blob.type});
-      const {verifyBrowserAsset} = await import("./browser-verify.js");
-      const result = await verifyBrowserAsset(file, $("#trust-profile").value);
-      addResult(result, file);
-      logActivity(`${file.name} · ${stateLabels[result.state] || result.state}`);
-      return;
+// Public-page discovery uses server-side HTML extraction; no screenshots or page content are sent to AI.
+const pageState={images:[], controller:null};
+function pageMessage(selector,message){const node=$(selector);node.textContent=message;node.hidden=!message;}
+function pageFileLabel(image,index){
+  let name="";try{name=decodeURIComponent(new URL(image.url).pathname.split("/").pop() || "");}catch{}
+  return (image.alt || name || `이미지 ${index+1}`).slice(0,180);
+}
+function renderPageCandidates(){
+  $("#page-image-count").textContent=`${pageState.images.length}개`;
+  $("#page-image-list").innerHTML=pageState.images.map((image,index)=>{
+    let host="";try{host=new URL(image.url).hostname;}catch{}
+    return `<li><label><input type="checkbox" data-page-image="${index}" checked><span><strong>${esc(pageFileLabel(image,index))}</strong><small>${esc(image.source || "이미지")} · ${esc(host)}</small></span></label></li>`;
+  }).join("");
+  $("#page-candidates").hidden=!pageState.images.length;
+}
+async function discoverPageImages(raw){
+  if(state.busy)return;
+  let url;try{url=validRemote(raw);}catch(cause){pageMessage("#page-error",cause.message);return;}
+  pageMessage("#page-error","");pageMessage("#page-status","게시물에서 이미지 주소를 찾고 있습니다…");
+  $("#page-discover").disabled=true;$("#page-candidates").hidden=true;pageState.images=[];setBusy(true);
+  try{
+    const response=await responseJSON(await fetch("/api/v1/web-images/discover",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})}));
+    pageState.images=Array.isArray(response.images) ? response.images : [];
+    renderPageCandidates();
+    const scope=response.scope === "추정 본문 영역" ? "페이지 구조에서 추정한 본문" : "본문";
+    const found=`${scope}에서 사진 ${pageState.images.length}개를 찾았습니다. 광고나 추천 이미지가 섞였는지 확인해 주세요.`;
+    const missing=response.scope === "unavailable" ? "공개 페이지에서 본문 사진 영역을 확인하지 못했습니다. 전체 페이지의 광고·추천 이미지는 가져오지 않았습니다. 원본 이미지 주소나 파일로 다시 확인해 주세요." : "본문에서 사진을 찾지 못했습니다. 로그인하거나 스크롤해야 나타나는 사진은 확인할 수 없습니다.";
+    pageMessage("#page-status",pageState.images.length ? found : missing);
+  }catch(cause){pageMessage("#page-status","");pageMessage("#page-error",cause.message || "게시물을 불러오지 못했습니다.");}
+  finally{setBusy(false);$("#page-discover").disabled=false;updateProcessingMode();}
+}
+async function analyzePageImages(){
+  if(state.busy)return;
+  const chosen=$$("[data-page-image]:checked").map(input=>pageState.images[Number(input.dataset.pageImage)]).filter(Boolean);
+  if(!chosen.length){pageMessage("#page-error","분석할 사진을 한 장 이상 선택해 주세요.");return;}
+  pageMessage("#page-error","");setBusy(true);$("#page-analyze").disabled=true;$("#page-discover").disabled=true;$("#page-cancel").hidden=false;
+  const controller=new AbortController();pageState.controller=controller;
+  const results=[], failures=[];let aiEnabled=$("#page-ai-summary").checked, aiFailed=false, stopped=false;
+  try{
+    for(const [index,image] of chosen.entries()){
+      pageMessage("#page-status",`${index+1} / ${chosen.length} · 이미지 파일을 가져와 검사 중입니다.`);
+      try{
+        const response=await fetch("/engine/api/verify-url",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:image.url,trust_profile:"lab",save_report:false}),signal:controller.signal});
+        if(response.status === 413)throw new Error("파일이 500 MB를 초과했습니다.");
+        const item=await responseJSON(response);
+        if(!String(item.mime || "").startsWith("image/"))throw new Error("이미지 파일이 아닙니다.");
+        if(item.state === "Error")throw new Error("파일 형식 또는 내용 때문에 검사하지 못했습니다.");
+        item.pqc_process={status:"SKIPPED",message:"게시물 사진은 C2PA만 검사했습니다. PQC 자동 보호는 원본 이미지 파일을 업로드해 진행하세요."};
+        results.push(item);
+        if(aiEnabled){
+          pageMessage("#page-status",`${index+1} / ${chosen.length} · 검사 결과의 AI 설명을 생성 중입니다.`);
+          try{state.explanations.set(explanationKey(item,"simple"),await requestAiSummary(item,"simple",controller.signal));}
+          catch(cause){if(controller.signal.aborted)throw cause;aiEnabled=false;aiFailed=true;}
+        }
+      }catch(cause){
+        if(controller.signal.aborted){stopped=true;break;}
+        failures.push(`${pageFileLabel(image,index)}: ${cause.message || "이미지를 가져오지 못했습니다."}`);
+      }
     }
-    const params = new URLSearchParams({trust_profile:"lab", save_report:String(!$("#private-mode").checked)});
-    const result = await responseJSON(await fetch(`/engine/api/samples/${encodeURIComponent(sample)}/verify?${params}`, {method:"POST"}));
-    result.sample_id = sample;
-    addResult(result);
-    logActivity(`${result.filename} · ${stateLabels[result.state] || result.state}`);
-  } catch (cause) { error(cause.message); logActivity(`분석 오류 · ${cause.message}`); }
-  finally { setBusy(false); progress("", false); updateProcessingMode(); }
+  }finally{
+    pageState.controller=null;setBusy(false);$("#page-discover").disabled=false;$("#page-analyze").disabled=false;$("#page-cancel").hidden=true;updateProcessingMode();
+  }
+  const notice={total:chosen.length,completed:results.length,stopped,aiFailed,failures};
+  pageMessage("#page-status",`${results.length} / ${chosen.length}개 검사 완료${stopped ? " · 중단됨" : ""}${failures.length ? ` · ${failures.length}개 실패` : ""}`);
+  if(!results.length){
+    pageMessage("#page-status",stopped ? "분석을 중단했습니다." : "");
+    pageMessage("#page-error",failures.length ? `분석을 완료한 사진이 없습니다. ${failures.join(" / ")}` : "");return;
+  }
+  for(const item of results)item.page_analysis=notice;
+  for(const item of results.slice(0,-1))state.results.push(item);
+  state.explainMode="simple";addResult(results[results.length-1]);
+}
+$("#page-url-form").addEventListener("submit",event=>{event.preventDefault();discoverPageImages($("#page-url-input").value.trim());});
+$("#page-select-all").addEventListener("click",()=>{$$("[data-page-image]").forEach(input=>input.checked=true);});
+$("#page-select-none").addEventListener("click",()=>{$$("[data-page-image]").forEach(input=>input.checked=false);});
+$("#page-analyze").addEventListener("click",analyzePageImages);
+$("#page-cancel").addEventListener("click",()=>{if(pageState.controller){pageMessage("#page-status","분석을 중단하고 있습니다…");pageState.controller.abort();}});
+
+async function verifySample(sample) {
+  if(state.busy)return;
+  const names={signed:'signed.jpg',tampered:'tampered.jpg',unsigned:'unsigned.jpg',ai:'ai-han-river-sunrise.png'};
+  try{
+    const response=await fetch(`/engine/api/samples/${encodeURIComponent(sample)}/file`);
+    if(!response.ok)throw Error('샘플 파일을 불러오지 못했습니다.');
+    const blob=await response.blob();await verifyFiles([new File([blob],names[sample]||'sample.jpg',{type:blob.type})]);
+  }catch(cause){error(cause.message);}
 }
 async function loadReport(id) {
   clearError(); progress("저장된 보고서를 열고 있습니다.");
@@ -355,6 +434,79 @@ function displayCounts(item) {
   for(const check of item.checks || [])totals[checkPresentation(check).tone]++;
   return totals;
 }
+// 표시 내용은 출처 기록의 선언만 사용합니다. 선언 부재는 비생성의 증거가 아닙니다.
+function sourceTypeCode(value){return typeof value === "string" ? value.split(/[\/#]/).pop() : "";}
+function isAiSourceType(value){return ["trainedAlgorithmicMedia","compositeWithTrainedAlgorithmicMedia","compositedWithTrainedAlgorithmicMedia"].includes(sourceTypeCode(value));}
+function aiActionTool(action,agents){
+  let agent=action.softwareAgent;
+  if(!agent && Number.isInteger(action.softwareAgentIndex) && action.softwareAgentIndex>=0)agent=agents?.[action.softwareAgentIndex];
+  if(typeof agent === "string")return agent.trim();
+  if(agent && typeof agent === "object"){
+    const name=typeof agent.name === "string" ? agent.name.trim() : "";
+    const version=typeof agent.version === "string" || typeof agent.version === "number" ? String(agent.version).trim() : "";
+    return name ? [name,version].filter(Boolean).join(" · ") : "";
+  }
+  return "";
+}
+function aiRecordManifests(item){
+  const store=item.store || {}, manifests=store.manifests || {}, root=store.active_manifest;
+  if(!root || !manifests[root])return [];
+  const found=[], queue=[{id:root,depth:0}], seen=new Set();
+  while(queue.length && found.length<100){
+    const next=queue.shift();if(seen.has(next.id) || !manifests[next.id])continue;
+    seen.add(next.id);const manifest=manifests[next.id];found.push({...next,manifest});
+    for(const ingredient of Array.isArray(manifest.ingredients) ? manifest.ingredients : []){
+      const id=ingredient?.active_manifest;
+      if(ingredient?.relationship === "parentOf" && typeof id === "string" && manifests[id] && !seen.has(id))queue.push({id,depth:next.depth+1});
+    }
+  }
+  return found;
+}
+function aiRecordWriter(item,manifests){
+  const manifest=manifests[0]?.manifest || {};
+  const info=Array.isArray(manifest.claim_generator_info) ? manifest.claim_generator_info : Array.isArray(item.software) ? item.software : [];
+  const names=info.map(agent=>typeof agent === "string" ? agent : typeof agent?.name === "string" ? agent.name : "").filter(Boolean);
+  return [...new Set(names)].join(", ") || (typeof manifest.claim_generator === "string" ? manifest.claim_generator : "");
+}
+function aiOrigin(item){
+  const manifests=aiRecordManifests(item);
+  let entries=manifests.flatMap(({manifest,id,depth})=>{
+    const groups=(Array.isArray(manifest.assertions) ? manifest.assertions : []).filter(a=>String(a?.label || "").startsWith("c2pa.actions"));
+    return groups.flatMap(a=>{
+      const data=a?.data || {}, agents=Array.isArray(data.softwareAgents) ? data.softwareAgents : [];
+      return (Array.isArray(data.actions) ? data.actions : []).map(action=>({action:action || {},agents,manifestId:id,depth}));
+    });
+  });
+  if(!entries.length)entries=(Array.isArray(item.actions) ? item.actions : []).map(action=>({action:action || {},agents:[],depth:0}));
+  const generated=entries.filter(({action})=>action.action === "c2pa.created" && sourceTypeCode(action.digitalSourceType) === "trainedAlgorithmicMedia");
+  const here=generated.filter(entry=>entry.depth === 0), previous=generated.filter(entry=>entry.depth > 0);
+  const edited=entries.find(({action,depth})=>depth === 0 && ["compositeWithTrainedAlgorithmicMedia","compositedWithTrainedAlgorithmicMedia"].includes(sourceTypeCode(action.digitalSourceType)));
+  const media=entries.find(({action,depth})=>depth === 0 && sourceTypeCode(action.digitalSourceType) === "trainedAlgorithmicMedia");
+  const capture=entries.find(({action,depth})=>depth === 0 && action.action === "c2pa.created" && sourceTypeCode(action.digitalSourceType) === "digitalCapture");
+  const candidates=here.length ? here : previous.length ? previous : edited ? [edited] : media ? [media] : [];
+  const tools=[...new Set(candidates.map(entry=>aiActionTool(entry.action,entry.agents)).filter(Boolean))];
+  const tool=tools.join(", "), writer=aiRecordWriter(item,manifests);
+  const creation=entries.find(({action,depth,agents})=>depth === 0 && action.action === "c2pa.created" && aiActionTool(action,agents));
+  const creationTool=creation ? aiActionTool(creation.action,creation.agents) : "";
+  const rawSoftware=item.image_info?.metadata?.Software;
+  const metadataSoftware=typeof rawSoftware === "string" ? rawSoftware.trim() : "";
+  const alert=item.state === "Invalid" ? "검증에 실패한 기록입니다. 검사 상세를 확인하세요." : "출처 기록 기준이며, 기록이 없어도 AI를 사용했을 수 있습니다.";
+  const base={tool,writer,metadataSoftware,creationTool,alert};
+  if(here.length)return {...base,kind:"created",label:"AI 생성으로 기록됨",caption:"현재 출처 기록에 AI가 생성한 이미지로 표시되어 있습니다.",toolLabel:"AI 생성 작업에 기록된 도구"};
+  if(previous.length)return {...base,kind:"inherited",label:"이전 이미지의 AI 생성 기록",caption:"연결된 이전 이미지에 AI 생성 기록이 있습니다.",toolLabel:"이전 생성 작업에 기록된 도구",extra:edited ? "현재 기록에는 AI 편집·합성 작업도 표시되어 있습니다." : "이전 이미지의 기록이므로 현재 파일의 모든 편집 과정까지 뜻하지 않습니다."};
+  if(edited)return {...base,kind:"edited",label:"AI 편집·합성으로 기록됨",caption:"출처 기록에 AI를 이용한 편집 또는 합성이 표시되어 있습니다.",toolLabel:"AI 편집 작업에 기록된 도구"};
+  if(media)return {...base,kind:"media",label:"AI 생성 매체 사용 기록",caption:"출처 기록에 AI 생성 매체 사용이 표시되어 있습니다.",toolLabel:"AI 관련 작업에 기록된 도구"};
+  if(capture)return {...base,kind:"unknown",label:"촬영으로 기록됨 · AI 생성 여부 미확인",caption:"촬영 기록은 있지만 AI 사용 여부는 확인할 수 없습니다."};
+  return {...base,kind:"unknown",label:"AI 생성 기록 미확인",caption:"출처 기록에서 AI 생성 여부를 확인하지 못했습니다."};
+}
+function renderAiOrigin(item){
+  const info=aiOrigin(item), relevant=info.kind !== "unknown";
+  const unknownReason=["Error","Unknown","RemoteUnavailable"].includes(item.state) ? "출처 기록을 확인하지 못했습니다." : item.state === "NoManifest" ? "파일에 C2PA 출처 기록이 없습니다." : "AI 사용 여부가 출처 기록에 명시되지 않았습니다.";
+  const toolLine=relevant ? `<p><span>${esc(info.toolLabel)}</span> <strong>${esc(info.tool || "기록되지 않음")}</strong></p>` : `<p>${esc(unknownReason)}</p>${info.creationTool ? `<p>생성 작업에 기록된 도구 <strong>${esc(info.creationTool)}</strong> <small>AI 사용 여부는 확인되지 않았습니다.</small></p>` : ""}`;
+  const writer=info.writer ? `<p>기록 작성 도구 <strong>${esc(info.writer)}</strong> <small>이미지 생성 도구와 다를 수 있습니다.</small></p>` : "";
+  const metadata=info.metadataSoftware ? `<p>일반 파일 정보 <strong>${esc(info.metadataSoftware)}</strong> <small>생성 도구의 증거는 아닙니다.</small></p>` : "";
+  return `<section class="ai-origin-card ${esc(info.kind)}" aria-label="AI 이미지 생성 기록"><div><span>AI 이미지 생성 기록</span><strong>${esc(info.label)}</strong></div>${toolLine}${info.extra ? `<p>${esc(info.extra)}</p>` : ""}${writer}${metadata}<small>${esc(info.alert)}</small></section>`;
+}
 function previewURL(item) {
   const local = state.localUrls.get(item.id);
   if (local) return local;
@@ -366,17 +518,17 @@ function renderPreview(item) {
   if (source && mime.startsWith("image/")) content = `<img src="${esc(source)}" alt="검증 대상 파일 미리보기">`;
   else if (source && mime.startsWith("video/")) content = `<video src="${esc(source)}" controls preload="metadata"></video>`;
   else if (source && mime.startsWith("audio/")) content = `<audio src="${esc(source)}" controls preload="metadata"></audio>`;
-  else if (source && mime === "application/pdf") content = `<div class="no-preview"><span>▤</span><strong>PDF 문서</strong><a href="${esc(source)}" target="_blank" rel="noopener">로컬 미리보기 열기 ↗</a></div>`;
-  $("#preview-card").innerHTML = `<div class="preview-stage">${content}<span class="preview-tag">${esc(mime || "FILE")}</span></div><div class="preview-caption"><strong>${esc(item.filename || "파일")}</strong><small>${sizes(item.size)} · SHA-256 ${esc((item.sha256 || "").slice(0, 18))}…</small></div>`;
+  else if (source && mime === "application/pdf") content = `<div class="no-preview"><span>▤</span><strong>PDF 문서</strong><a href="${esc(source)}" target="_blank" rel="noopener">미리보기 열기 ↗</a></div>`;
+  $("#preview-card").innerHTML = `<div class="preview-stage">${content}<span class="preview-tag">${esc(mime || "FILE")}</span></div><div class="preview-caption"><strong>${esc(item.filename || "파일")}</strong><small>${sizes(item.size)} · SHA-256 ${esc((item.sha256 || "").slice(0, 18))}…</small><p class="preview-ai-caption">${esc(aiOrigin(item).caption)}</p></div>`;
 }
 function renderSummary(item) {
   const signature = item.signature || {}, active = activeManifest(item);
   const software = (item.software || []).map(s => s.name).filter(Boolean).join(", ") || active.claim_generator || "정보 없음";
-  const ai = item.ai === "declared" ? "Manifest에 선언됨" : "확인 가능한 선언 없음";
+  const ai = aiOrigin(item).label;
   const fields = [["서명자",signature.common_name || "정보 없음"],["발급자",signature.issuer || "정보 없음"],
     ["서명 알고리즘",signature.alg || "정보 없음"],["제작 도구",software],["AI 생성 선언",ai],
     ["Manifest",`${item.manifest_count || 0}개 ${item.embedded ? "· 파일 내장" : ""}`],
-    ["검증 정책",item.trust_profile === "lab" ? "프로젝트 CA 신뢰" : "기본 SDK 목록"]];
+    ["검증 정책",item.trust_profile === "lab" ? "자체 CA 신뢰" : "기본 SDK 목록"]];
   return `<div class="summary-fields">${fields.map(([label,value])=>`<div><span>${term(label)}</span><strong>${label === "발급자" ? annotateIssuer(value) : label === "검증 정책" || label === "AI 생성 선언" ? annotateTerms(value) : esc(value)}</strong></div>`).join("")}</div><p class="small-note">검증 시각 ${when(item.created_at)}</p>`;
 }
 function renderBatch() {
@@ -388,7 +540,7 @@ function renderVerdict(item) {
   const name = {Trusted:"검증 통과 · 서명자 신뢰 확인",Valid:"파일 검증 통과 · 신뢰 미확인",Invalid:"검증 실패",NoManifest:"검증할 출처 기록 없음",RemoteUnavailable:"외부 기록이 필요해 검증 보류",Error:"파일 분석 오류",Unknown:"검증 상태 확인 불가"}[status] || "검증 상태 확인 불가";
   $("#verdict").className = `verdict ${esc(status.toLowerCase())}`;
   const icon=status === "Trusted" ? "✓" : status === "Invalid" || status === "Error" ? "×" : status === "Valid" ? "!" : "−";
-  $("#verdict").innerHTML = `<div class="verdict-icon" aria-hidden="true">${icon}</div><div><span>전체 검증 결과</span><h3>${esc(name)}</h3><p>${esc(stateDescriptions[status] || "검사를 완료하지 못했습니다. 검사 상세에서 원인을 확인하세요.")}</p></div>`;
+  $("#verdict").innerHTML = `<div class="verdict-icon" aria-hidden="true">${icon}</div><div><span>C2PA 검증 결과</span><h3>${esc(name)}</h3><p>${esc(stateDescriptions[status] || "검사를 완료하지 못했습니다. 검사 상세에서 원인을 확인하세요.")}</p></div>`;
 }
 function renderReadout(item) {
   const status=item.state || "Unknown", present=Number(item.manifest_count || Object.keys(item.store?.manifests || {}).length)>0;
@@ -400,6 +552,36 @@ function renderReadout(item) {
   const signer=signerConfirmed ? ["확인","선택한 신뢰 목록에서 서명자를 확인했습니다. 파일 검증 결과는 별도 항목입니다.","yes"] : signerUnconfirmed ? ["미확인","선택한 신뢰 목록에서 서명자를 확인하지 못했습니다.","unknown"] : ["판단 불가","이 결과로 서명자의 신뢰를 확인할 수 없습니다.","unknown"];
   const entries=[["출처 기록",records],["파일·기록 검증",integrity],["서명자 신뢰",signer]];
   $("#readout").innerHTML=`<div class="readout-heading"><strong>항목별 확인 결과</strong></div><div class="readout-grid">${entries.map(([question,[answer,detail,tone]])=>`<article class="readout-card ${tone}"><span class="readout-symbol" aria-hidden="true">${tone === "yes" ? "✓" : tone === "no" ? "×" : "−"}</span><div class="readout-copy"><div class="readout-title"><strong>${esc(question)}</strong><b class="readout-status">${esc(answer)}</b></div><p>${esc(detail)}</p></div></article>`).join("")}</div>`;
+}
+function pqDetails(item){
+  if(item.conversion_v4){const r=item.conversion_v4.result || {},p=r.p1_validation || {};
+    return {present:true,embedded:false,detached:true,status:p.claim_signature === "VALID" && p.hard_binding === "VALID" && p.soft_binding === "VALID" ? "VALID" : "UNVERIFIED",schema:p.profile,signatureValid:p.claim_signature === "VALID",reason:"V4 변환 응답의 DB P1 검증 결과입니다. 이미지 안의 P1을 검사한 결과가 아닙니다."};
+  }
+  if(item.pqc_process)return {present:false,status:'UNVERIFIED',reason:item.pqc_process.message||'PQC 처리를 완료하지 못했습니다.'};
+  const store=item.store || {}, active=store.manifests?.[store.active_manifest] || {};
+  const assertion=(active.assertions || []).find(a=>String(a.label || "").startsWith("org.pq-c2pa.p1"));
+  const data=assertion?.data || {}, payload=data.payload || {};
+  const ev=item.pq_evidence || {};
+  const present=Boolean(ev.present || assertion || ["VALID","INVALID"].includes(ev.status));
+  let status=ev.status || (present ? "UNVERIFIED" : "UNKNOWN");
+  if (!present && (["Error","RemoteUnavailable","Unknown"].includes(item.state) || item.processing_mode === "browser")) status="UNVERIFIED";
+  return {present,status,embedded:!!assertion,reason:ev.reason || "",algorithm:ev.signature_algorithm || data.signature_algorithm,
+    hashValid:ev.payload_hash_valid, payloadHash:ev.payload_sha3_256 || data.payload_sha3_256,
+    sourceHash:ev.source_file_sha3_256 || payload.source_file_sha3_256,
+    sourceManifest:ev.m0_active_manifest || payload.m0_active_manifest,
+    sourceState:ev.m0_validation_state || payload.m0_validation_state,
+    created:ev.created_at || payload.created_at,schema:ev.schema || data.schema,
+    signatureValid:ev.signature_valid,verifier:ev.verifier,publicKeyHash:ev.public_key_sha256};
+}
+function pqPlain(item){
+  if(item.pqc_process && !item.conversion_v4)return item.pqc_process.message||'PQC 처리를 완료하지 못했습니다. C2PA 검사 결과는 별도 항목에서 확인하세요.';
+  const pq=pqDetails(item);
+  if(pq.detached)return "V4 서버가 DB에 별도로 저장된 P1의 서명·바인딩을 검증한 결과입니다. 자체 루트 기준이며 실험용 PQ 프로파일입니다.";
+  return ({VALID:"이미지에 포함된 기존 형식의 P1 서명 검사를 통과했습니다. 외부 DB의 P1은 조회하지 않았으며 공개키 소유자 신뢰도 별도로 확인해야 합니다.",
+    INVALID:"양자내성 P1 검사에서 오류가 확인되었습니다. 검사 상세의 사유를 확인하세요.",
+    UNVERIFIED:"양자내성 증거 또는 서명을 확인하지 못했습니다. 검사하지 못한 항목을 통과로 해석할 수 없습니다.",
+    NOT_PRESENT:"이미지 내 P1은 확인되지 않았습니다. 외부 DB의 P1은 조회하지 않아 유무와 서명 상태를 확인할 수 없습니다.",
+    UNKNOWN:"양자내성 증거의 검사 상태를 확인할 수 없습니다."})[pq.status] || "양자내성 검사 상태를 확인할 수 없습니다.";
 }
 function explanationKey(item,mode){return `${item.id || state.active}:${mode}`;}
 function localExplanation(item,mode){
@@ -413,7 +595,7 @@ function localExplanation(item,mode){
     Error:["파일 분석을 마치지 못했습니다.","파일 형식이나 손상 등으로 검사 결과를 얻지 못했습니다. C2PA 기록 유무도 단정할 수 없습니다.","파일을 다시 다운로드하거나 다른 원본으로 재검증해 보세요."]
   };
   const [summary,meaning,next_step]=explanations[status] || ["검증 상태를 확정하지 못했습니다.","현재 결과만으로 출처 기록의 상태를 단정할 수 없습니다.","원본 파일로 다시 검증해 보세요."];
-  const detail=mode === "detail" ? ` 검사 기록에는 통과 ${totals.success}개, 실패 ${totals.failure}개, 신뢰 미확인 ${totals.warning}개, 안내 ${totals.informational}개가 표시됩니다. ${item.ai === "declared" ? "AI 사용 선언이 기록되어 있지만 이것은 독립적인 AI 탐지가 아닙니다." : "AI 사용 선언이 보이지 않아도 AI 사용 여부를 확정할 수는 없습니다."}` : "";
+  const detail=mode === "detail" ? ` 검사 기록에는 통과 ${totals.success}개, 실패 ${totals.failure}개, 신뢰 미확인 ${totals.warning}개, 안내 ${totals.informational}개가 표시됩니다. ${aiOrigin(item).kind !== "unknown" ? "AI 관련 작업이 출처 기록에 표시되어 있지만 이것은 독립적인 AI 탐지가 아닙니다." : "AI 관련 기록이 보이지 않아도 AI 사용 여부를 확정할 수는 없습니다."}` : "";
   return {mode,source:"built_in",summary,meaning:meaning+detail,next_step,limit:"출처 검증은 사진 속 장면의 사실 여부, 법적 소유권 또는 AI 생성 여부를 단독으로 증명하지 않습니다."};
 }
 function renderAiPanel(item) {
@@ -437,7 +619,7 @@ function renderAiPanel(item) {
   errorNode.textContent=error;errorNode.hidden=!error;waitNode.hidden=!busy;
   const target=panel.querySelector(".ai-explanation-output");
   target.setAttribute("aria-busy",String(busy));
-  const content=`<span>${output.source === "ai" ? "AI가 작성한 설명" : "검증 결과 기본 해설"} · ${state.explainMode === "detail" ? "자세히" : "요약"}</span>${outputBody}<small>${esc(output.limit)}</small>`;
+  const content=`<span>${output.source === "ai" ? "AI가 작성한 설명" : "검증 결과 기본 해설"} · ${state.explainMode === "detail" ? "자세히" : "요약"}</span>${outputBody}<p class="ai-pq-evidence"><b>PQC 변환·서명 확인</b> ${esc(pqPlain(item))}</p><small>${esc(output.limit)}</small>`;
   // Keep the previous answer mounted during the request; animate only changed text.
   const contentKey=JSON.stringify([key,content]);
   if(target.dataset.contentKey === contentKey)return;
@@ -450,6 +632,20 @@ function renderAiPanel(item) {
   if(hadContent && Math.abs(after-before)>1)target.animate([{height:`${before}px`},{height:`${after}px`}],{duration:280,easing:"ease-out"});
 }
 function aiReportIcon(){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>`;}
+async function requestAiSummary(item,mode,signal){
+    const priority={failure:0,informational:1,success:2};
+    const checks=(item.checks || []).filter(check=>["success","failure","informational"].includes(check.kind))
+      .sort((a,b)=>priority[a.kind]-priority[b.kind]).slice(0,20)
+      .map(check=>({kind:check.kind,code:String(check.code || "").replace(/[^A-Za-z0-9_.:-]/g,"").slice(0,100)}));
+    const report={state:stateLabels[item.state] ? item.state : "Unknown",manifest_count:Math.min(1000,Math.max(0,Number(item.manifest_count || 0))),ai_declaration:["created","edited","media"].includes(aiOrigin(item).kind) ? "declared" : "unknown",checks};
+    report.trust_scope=item.trust_profile === "lab" ? "FRAMEWORK_LOCAL" : item.trust_profile === "standard" ? "SDK_DEFAULT" : "UNKNOWN";
+    report.pq_status=pqDetails(item).status === "NOT_PRESENT" ? "UNKNOWN" : pqDetails(item).status;
+    const payload={audience:mode === "detail" ? "researcher" : "general",report:item.conversion_v4 && v4Module ? {...v4Module.aiEvidence(item.conversion_v4,item.v4_registration_record),classic_inspection:report} : report};
+    const response=await responseJSON(await fetch("/api/v1/ai/summaries",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal}));
+    const summary=response.data?.summary;
+    if(typeof summary !== "string" || !summary.trim())throw new Error("서버가 비어 있는 AI 요약을 반환했습니다.");
+    return {mode,source:"ai",summary:summary.trim(),limit:localExplanation(item,mode).limit};
+}
 async function explainCurrent(mode){
   const item=result();if(!item || state.explainBusy)return;
   state.explainMode=mode;
@@ -459,37 +655,129 @@ async function explainCurrent(mode){
   if(cached?.source === "ai"){renderAiPanel(item);return;}
   state.explainBusy=key;renderAiPanel(item);
   try {
-    const priority={failure:0,informational:1,success:2};
-    const checks=(item.checks || []).filter(check=>["success","failure","informational"].includes(check.kind))
-      .sort((a,b)=>priority[a.kind]-priority[b.kind]).slice(0,20)
-      .map(check=>({kind:check.kind,code:String(check.code || "").replace(/[^A-Za-z0-9_.:-]/g,"").slice(0,100)}));
-    const report={state:stateLabels[item.state] ? item.state : "Unknown",manifest_count:Math.min(1000,Math.max(0,Number(item.manifest_count || 0))),ai_declaration:item.ai === "declared" ? "declared" : item.ai === "not_declared" ? "not_declared" : "unknown",checks};
-    report.trust_scope=item.trust_profile === "lab" ? "FRAMEWORK_LOCAL" : item.trust_profile === "standard" ? "SDK_DEFAULT" : "UNKNOWN";
-    report.pq_status=["VALID","INVALID","UNVERIFIED","NOT_PRESENT"].includes(item.pq_evidence?.status) ? item.pq_evidence.status : "UNKNOWN";
-    const payload={audience:mode === "detail" ? "researcher" : "general",report};
-    const response=await responseJSON(await fetch("/api/v1/ai/summaries",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}));
-    const summary=response.data?.summary;
-    if(typeof summary !== "string" || !summary.trim())throw new Error("서버가 비어 있는 AI 요약을 반환했습니다.");
-    state.explanations.set(key,{mode,source:"ai",summary:summary.trim(),limit:localExplanation(item,mode).limit});
+    state.explanations.set(key,await requestAiSummary(item,mode));
   } catch(cause){state.explanations.set(key,localExplanation(item,mode));state.explainErrors.set(key,`${cause.message || "AI 요약 요청에 실패했습니다."} 기본 해설을 표시합니다. 버튼을 눌러 다시 시도할 수 있습니다.`);}
   finally {state.explainBusy="";if(result())renderAiPanel(result());}
 }
+const HISTORY_ACTIONS={
+  "c2pa.created":["콘텐츠 생성","이 콘텐츠를 생성하는 작업이 기록되었습니다. 실제 촬영이나 제작 과정을 모두 확인했다는 뜻은 아닙니다."],
+  "c2pa.edited":["콘텐츠 편집","콘텐츠를 편집하는 작업이 기록되었습니다. 이 항목만으로 수정한 부분이나 편집의 목적은 알 수 없습니다."],
+  "c2pa.opened":["파일 열기","도구에서 파일을 열었다고 기록되어 있습니다. 파일을 열었다는 것만으로 내용이 수정되었다는 뜻은 아닙니다."],
+  "c2pa.placed":["재료 삽입","다른 콘텐츠를 재료로 사용한 작업이 기록되었습니다. 아래의 ‘연결된 재료’에서 확인 가능한 재료를 볼 수 있습니다."],
+  "c2pa.resized":["크기 변경","이미지 크기를 변경한 작업이 기록되었습니다. 구체적인 크기는 기록에 표시된 경우에만 확인할 수 있습니다."],
+  "c2pa.cropped":["이미지 자르기","이미지의 일부를 잘라 내는 작업이 기록되었습니다. 이 설명만으로 잘린 영역은 알 수 없습니다."],
+  "c2pa.published":["콘텐츠 게시","콘텐츠를 게시하는 작업이 기록되었습니다. 이 기록만으로 게시된 장소나 현재 게시 상태를 확인할 수는 없습니다."],
+  "c2pa.transcoded":["파일 형식 변환","파일의 표현 또는 인코딩을 변환하는 작업이 기록되었습니다. 구체적인 변환 내용은 원본 기록에서 확인하세요."]
+};
+function historyAgent(value){
+  if(typeof value === "string")return value.trim();
+  if(value && typeof value === "object"){
+    const name=typeof value.name === "string" ? value.name : "";
+    const version=typeof value.version === "string" || typeof value.version === "number" ? String(value.version) : "";
+    return [name,version].filter(Boolean).join(" · ");
+  }
+  return "";
+}
+function historySourceLabel(value){
+  const code=String(value || "").split(/[\/#]/).pop();
+  return ({digitalCapture:"기기로 캡처한 콘텐츠로 기록됨",digitalArt:"디지털 제작 콘텐츠로 기록됨",trainedAlgorithmicMedia:"AI를 이용해 생성한 콘텐츠로 기록됨",compositeWithTrainedAlgorithmicMedia:"AI 생성 요소를 포함한 콘텐츠로 기록됨",compositedWithTrainedAlgorithmicMedia:"AI 생성 요소를 포함한 콘텐츠로 기록됨",algorithmicallyEnhanced:"알고리즘으로 수정한 콘텐츠로 기록됨"})[code] || "출처 유형이 기록됨";
+}
 function renderActions(item) {
-  const labels = {"c2pa.created":"콘텐츠 생성","c2pa.edited":"콘텐츠 편집","c2pa.opened":"파일 열기","c2pa.placed":"재료 삽입","c2pa.resized":"크기 변경","c2pa.cropped":"자르기","c2pa.published":"발행","c2pa.transcoded":"인코딩 변경"};
-  const actions = item.actions || [];
-  if (!actions.length) return `<p class="empty">Manifest에 기록된 작업 이력이 없습니다.</p>`;
-  return `<ol class="timeline">${actions.map(action=>`<li><span>${esc(labels[action.action] || action.action || "작업")}</span><small>${esc(action.action || "")}</small><p>${esc(typeof action.softwareAgent === "object" ? JSON.stringify(action.softwareAgent) : action.softwareAgent || "제작 도구 정보 없음")}${action.when ? ` · ${esc(action.when)}` : ""}</p>${action.digitalSourceType ? `<code>${esc(action.digitalSourceType)}</code>` : ""}</li>`).join("")}</ol>`;
+  const actions=Array.isArray(item.actions) ? item.actions : [];
+  const readable=Boolean(item.store?.active_manifest && item.store?.manifests?.[item.store.active_manifest]);
+  if(!actions.length)return `<p class="empty history-empty">${readable ? "현재 출처 기록에 표시된 작업 이력이 없습니다. 이 사실만으로 편집이 없었다고 판단할 수는 없습니다." : item.state === "NoManifest" ? "이 파일에서 C2PA 출처 기록을 찾지 못해 작업 이력을 볼 수 없습니다. 기록이 없다는 사실만으로 변조 여부를 판단할 수는 없습니다." : "현재 출처 기록을 읽지 못해 제작·편집 작업을 확인할 수 없습니다."}</p>`;
+  return `<ol class="timeline history-timeline">${actions.map((raw,index)=>{
+    const action=raw && typeof raw === "object" ? raw : {}, code=typeof action.action === "string" ? action.action : "";
+    const [label,explanation]=HISTORY_ACTIONS[code] || ["기타 기록된 작업","출처 기록에 작업이 있지만, 이 도구에서는 작업의 의미를 자세히 해석할 수 없습니다. 원본 항목을 확인하세요."];
+    const agent=historyAgent(action.softwareAgent), timestamp=typeof action.when === "string" ? action.when : "";
+    const source=typeof action.digitalSourceType === "string" ? action.digitalSourceType : "";
+    return `<li><div class="history-action"><div class="history-action-head"><strong>${esc(label)}</strong><span>기록 순서 ${index+1}</span></div><p>${esc(explanation)}</p><div class="history-action-meta"><div><span>기록된 도구</span><strong>${esc(agent || "정보 없음")}</strong></div><div><span>기록된 시각</span><strong>${esc(timestamp || "정보 없음")}</strong></div>${source ? `<div><span>출처 유형</span><strong>${esc(historySourceLabel(source))}</strong></div>` : ""}</div><details class="history-raw"><summary>원본 작업 항목 보기</summary><p>작업 코드: <code>${esc(code || "정보 없음")}</code></p>${source ? `<p>출처 유형 코드: <code>${esc(source)}</code></p>` : ""}<pre>${esc(JSON.stringify(action,null,2))}</pre></details></div></li>`;
+  }).join("")}</ol>`;
 }
 function renderChain(item) {
-  const store = item.store || {}, manifests = store.manifests || {};
-  const keys = Object.keys(manifests).sort((a,b)=>Number(a === store.active_manifest)-Number(b === store.active_manifest));
-  if (!keys.length) return `<p class="empty">연결된 Manifest가 없습니다.</p>`;
+  const store=item.store || {}, manifests=store.manifests || {};
+  const keys=Object.keys(manifests).sort((a,b)=>Number(a === store.active_manifest)-Number(b === store.active_manifest));
+  if(!keys.length)return `<p class="empty history-empty">열어 볼 수 있는 출처 기록이 없습니다. 기록 유무를 확인하지 못한 경우에는 검사 상세에서 원인을 확인하세요.</p>`;
   return `<div class="chain">${keys.map((id,index)=>{
-    const node=manifests[id] || {}, sig=node.signature_info || {}, thumb=item.manifest_thumbnails?.[id];
-    const safeThumb=/^data:image\/(jpeg|png|webp);base64,/i.test(thumb || "") ? `<img src="${esc(thumb)}" alt="Manifest 썸네일">` : `<span class="chain-fallback">${index+1}</span>`;
-    const parents=(node.ingredients || []).map(x=>x.title || x.relationship || "재료").join(", ");
-    return `<article class="chain-card ${id === store.active_manifest ? "active" : ""}"><div class="chain-thumb">${safeThumb}</div><div><span>${id === store.active_manifest ? "활성 Manifest · 현재 파일" : "이전 Manifest / 연결된 재료"}</span><h4>${esc(node.title || item.filename || "파일")}</h4><p>서명자 ${esc(sig.common_name || sig.issuer || "정보 없음")} · ${esc(node.format || item.mime || "형식 미상")}</p>${parents ? `<small>재료: ${esc(parents)}</small>` : ""}<code>${esc(id)}</code></div></article>`;
+    const node=manifests[id] || {}, sig=node.signature_info || {}, thumb=item.manifest_thumbnails?.[id], active=id === store.active_manifest;
+    const safeThumb=/^data:image\/(jpeg|png|webp);base64,/i.test(thumb || "") ? `<img src="${esc(thumb)}" alt="출처 기록의 썸네일">` : `<span class="chain-fallback">${index+1}</span>`;
+    const nodeIngredients=Array.isArray(node.ingredients) ? node.ingredients : [];
+    const ingredientNames=nodeIngredients.map(ingredient=>ingredient?.title || ingredient?.relationship || "이름 미기록").join(", ");
+    return `<article class="chain-card ${active ? "active" : ""}"><div class="chain-thumb">${safeThumb}</div><div><span>${active ? "현재 파일에서 선택된 출처 기록" : "함께 읽힌 다른 출처 기록"}</span><h4>${esc(node.title || "제목이 기록되지 않음")}</h4><p>${active ? "이 파일의 현재 출처 기록으로 사용됩니다." : "파일과 함께 읽힌 기록입니다. 표시 순서만으로 생성 순서를 판단하지 않습니다."}</p><small>기록된 서명자: ${esc(sig.common_name || "정보 없음")} · 인증서 발급자: ${esc(sig.issuer || "정보 없음")} · 형식: ${esc(node.format || (active ? item.mime : "") || "정보 없음")}</small>${ingredientNames ? `<p>이 기록에 적힌 재료: ${esc(ingredientNames)}</p>` : ""}<details class="history-raw"><summary>기록 식별자 보기</summary><code>${esc(id)}</code></details></div></article>`;
   }).join("")}</div>`;
+}
+function renderHistoryIngredients(item){
+  const ingredients=Array.isArray(item.ingredients) ? item.ingredients : [];
+  const readable=Boolean(item.store?.active_manifest && item.store?.manifests?.[item.store.active_manifest]);
+  if(!ingredients.length)return `<p class="empty history-empty">${readable ? "현재 기록에서 연결된 재료가 확인되지 않았습니다. 재료를 사용하지 않았다는 뜻은 아닙니다." : item.state === "NoManifest" ? "C2PA 출처 기록을 찾지 못해 연결된 재료를 확인할 수 없습니다." : "현재 기록을 읽지 못해 연결된 재료를 확인할 수 없습니다."}</p>`;
+  const descriptions={parentOf:["이전 단계로 연결됨","이 파일의 이전 단계에 사용된 재료로 기록되어 있습니다."],componentOf:["구성 재료로 연결됨","콘텐츠를 구성하는 데 사용된 재료로 기록되어 있습니다."],inputTo:["입력 재료로 연결됨","작업에 사용된 입력 자료로 기록되어 있습니다."]};
+  return `<div class="history-ingredients">${ingredients.map(raw=>{
+    const ingredient=raw && typeof raw === "object" ? raw : {}, relation=typeof ingredient.relationship === "string" ? ingredient.relationship : "";
+    const [label,description]=descriptions[relation] || ["재료로 기록됨","연결된 재료가 기록되어 있습니다. 구체적인 관계는 원본 항목을 확인하세요."];
+    const title=typeof ingredient.title === "string" && ingredient.title.trim() ? ingredient.title : "이름이 기록되지 않은 재료";
+    return `<article><strong>${esc(title)}</strong><span>${esc(label)}</span><p>${esc(description)}</p><small>재료가 기록되었다는 사실만으로 해당 재료의 진위나 원본의 위치를 확인할 수는 없습니다.</small></article>`;
+  }).join("")}</div>`;
+}
+function pqDisplayValue(value){return typeof value === "string" && value.trim() ? value.trim() : "";}
+function pqShort(value){const text=pqDisplayValue(value);return text.length > 38 ? `${text.slice(0,22)}…${text.slice(-10)}` : text || "확인되지 않음";}
+function pqRow(label,value){return `<div class="pq-record-row"><span>${esc(label)}</span><strong>${esc(value || "확인되지 않음")}</strong></div>`;}
+function pqFullValue(label,value){
+  const text=pqDisplayValue(value);
+  return `<div class="pq-full-value"><div><span>${esc(label)}</span>${text ? `<button type="button" class="pq-copy" data-pq-copy="${esc(text)}" aria-label="${esc(label)} 복사">복사</button>` : ""}</div><code>${esc(text || "확인되지 않음")}</code></div>`;
+}
+function pqSoftBinding(manifest){
+  const assertion=(Array.isArray(manifest.assertions) ? manifest.assertions : []).find(a=>String(a?.label || "").startsWith("c2pa.soft-binding"));
+  const data=assertion?.data && typeof assertion.data === "object" ? assertion.data : {};
+  return {present:!!assertion,label:assertion?.label,algorithm:pqDisplayValue(data.alg || data.algorithm),
+    display:pqDisplayValue(data.display || (typeof data.value === "string" && data.value.startsWith("ISCC:") ? data.value : "")),
+    encoded:pqDisplayValue(data.value_base64)};
+}
+function renderPqResult(item) {
+  if((item.pqc_process || item.conversion_v4) && v4Module){
+    const process=item.pqc_process||{},job=item.conversion_v4||process.job||{status:process.status||'UNAVAILABLE',source:{filename:item.input_inspection?.filename||item.filename},error:{message:process.message}};
+    const original=item.input_inspection?`<details class="code-details" data-section="input-inspection"><summary>처리 전 입력 이미지의 C2PA 검사 · JSON</summary><pre>${esc(JSON.stringify(item.input_inspection,null,2))}</pre></details>`:'';
+    return v4Module.renderResult(job,{classic:item,input:item.input_inspection,record:item.v4_registration_record,recordError:process.record_error,notice:process.message,paused:process.paused,isOutput:!!item.conversion_v4,actions:'unified'})+original;
+  }
+  const pq=pqDetails(item), manifest=activeManifest(item), signature=manifest.signature_info || item.signature || {};
+  const store=item.store || {}, active=pqDisplayValue(store.active_manifest);
+  const soft=pqSoftBinding(manifest), job=conversionFor(item), output=job?.result || {}, source=job?.source || {};
+  const labels={VALID:"서명 검사 통과",INVALID:"검사 실패",UNVERIFIED:"검사하지 못함",NOT_PRESENT:"외부 P1 미조회",UNKNOWN:"확인 불가"};
+  const pqLabel=labels[pq.status] || "확인 불가";
+  const classicLabel=stateLabels[item.state] || "확인 불가";
+  const parent=(Array.isArray(manifest.ingredients) ? manifest.ingredients : []).find(entry=>entry?.relationship === "parentOf");
+  const parentId=pqDisplayValue(parent?.active_manifest), parentName=pqDisplayValue(parent?.title);
+  const parentText=parentId ? pqShort(parentId) : parentName || "기록되지 않음";
+  const location=pq.embedded ? "이미지에 포함된 기존 형식" : pq.present ? "기록 위치 미확인" : "외부 DB 미조회";
+  const classicAlgorithmRaw=pqDisplayValue(signature.alg || signature.algorithm);
+  const classicAlgorithm=/^(?:es|ps|rs)\d+$/i.test(classicAlgorithmRaw) ? classicAlgorithmRaw.toUpperCase() : classicAlgorithmRaw;
+  const fp=soft.display || soft.encoded;
+  const hashState=pq.hashValid === true ? "일치" : pq.hashValid === false ? "불일치" : "세부 결과 없음";
+  const signatureState=pq.signatureValid === true ? "통과" : pq.signatureValid === false ? "실패" : "세부 결과 없음";
+  const softDetail=soft.present ? `${pqRow("어설션",soft.label)}${pqRow("지문 알고리즘",soft.algorithm)}${pqFullValue(soft.display ? "기록된 ISCC 지문" : "기록된 지문 (Base64)",fp)}<p class="pq-record-note">출처 기록에 저장된 값입니다. 현재 이미지나 다른 기록과의 일치는 확인하지 않았습니다.</p>` : `<p class="pq-record-note">현재 C2PA 기록에서 소프트 바인딩을 찾지 못했습니다. 외부 기록은 조회하지 않았습니다.</p>`;
+  return `<section class="pq-screen" aria-label="양자내성 서명 확인">
+    <div class="pq-screen-heading"><span class="pq-screen-mark" aria-hidden="true">◇</span><div><span>QUANTUM-RESISTANT SIGNATURE</span><h3>양자내성 서명 확인</h3><p>현재 이미지의 기존 출처 기록과 확인 가능한 P1 정보를 살펴봅니다.</p></div></div>
+    <div class="pq-result ${esc(pq.status.toLowerCase())}" aria-label="양자내성 검사 결과"><div><strong>P1 서명 검사</strong><b>${esc(pqLabel)}</b></div><p>${esc(pq.reason || pqPlain(item))}</p>${pq.reason ? `<small>${esc(pqPlain(item))}</small>` : ""}</div>
+    <div class="pq-summary-cards"><article><span>분석 이미지</span><strong>${esc(item.filename || "파일 정보 없음")}</strong><small>현재 검사한 파일</small></article><article><span>기존 C2PA</span><strong>${esc(classicLabel)}</strong><small>서명·파일 결합 및 신뢰 상태</small></article><article><span>양자내성 기록 (P1)</span><strong>${esc(pq.algorithm || (pq.present ? "알고리즘 미확인" : "미확인"))}</strong><small>${esc(pqLabel)}</small></article></div>
+    <div class="pq-records-heading"><h3>출처 기록 연결</h3><span>소프트 바인딩</span></div>
+    <div class="pq-records"><article class="pq-record"><header><strong>현재 이미지의 C2PA 기록</strong><small>${esc(active ? "기록 확인" : "기록 미확인")}</small></header>
+      ${pqRow("매니페스트 ID",pqShort(active))}${pqRow("서명 알고리즘",classicAlgorithm)}${pqRow("이전 출처 기록",parentText)}
+      <details class="pq-record-detail" data-section="pq-classic"><summary><span class="pq-closed">기록 상세 보기</span><span class="pq-open">기록 상세 접기</span><i aria-hidden="true">⌄</i></summary>
+        ${pqFullValue("전체 매니페스트 ID",active)}${parentId ? pqFullValue("이전 매니페스트 ID",parentId) : ""}${softDetail}
+      </details></article>
+      <div class="pq-link" aria-label="출처 기록 연결 상태"><span>연결 여부 미확인</span><small>${esc(soft.display ? pqShort(soft.display) : soft.present ? "지문 기록 확인" : "지문 확인되지 않음")}</small></div>
+      <article class="pq-record"><header><strong>양자내성 기록 (P1)</strong><small>${esc(pq.embedded ? "이미지 내 기록" : "외부 DB 미조회")}</small></header>
+        ${pqRow("기록 위치",location)}${pqRow("서명 알고리즘",pq.algorithm)}${pqRow("P1 검사 결과",pqLabel)}
+        <details class="pq-record-detail" data-section="pq-p1"><summary><span class="pq-closed">기록 상세 보기</span><span class="pq-open">기록 상세 접기</span><i aria-hidden="true">⌄</i></summary>
+          ${pqRow("기록 형식",pq.schema)}${pqFullValue("P1에 기록된 M0 매니페스트 ID",pq.sourceManifest)}${pqFullValue("P1 데이터 SHA3-256",pq.payloadHash)}${pqFullValue("기록된 원본 파일 SHA3-256",pq.sourceHash)}
+          <p class="pq-record-note">기록된 원본 해시와 M0 ID는 원본 파일을 직접 대조했다는 뜻이 아닙니다. 외부 DB의 P1은 조회하지 않았습니다.</p>
+        </details></article></div>
+    <details class="pq-verification-detail" data-section="pq-verification"><summary>서명 검증 상세 <span aria-hidden="true">⌄</span></summary><div class="pq-verification-content">
+      ${pqRow("P1 데이터 해시 검사",hashState)}${pqRow("P1 서명 검사",signatureState)}${pqRow("P1 검사 도구",pq.verifier)}${pqRow("P1 기록 생성 시각",pq.created ? when(pq.created) : "")}
+      ${pqFullValue("P1 공개키 SHA-256",pq.publicKeyHash)}${pqRow("변환 작업 기록",job ? "이 브라우저에서 결과 파일의 해시와 일치하는 작업 확인" : "이 브라우저에서 연결된 작업을 찾지 못함")}
+      ${job ? `${pqRow("변환 입력 파일",source.filename)}${pqRow("변환 결과 파일",output.filename)}` : ""}
+      <p class="pq-record-note">P1 서명 통과는 공개키 소유자의 신뢰까지 확인했다는 뜻이 아닙니다. 외부 DB의 기록은 조회하지 않았습니다.</p>
+    </div></details>${pq.status === "NOT_PRESENT" ? '<p class="pq-record-note">이미지 파일을 통합 검사에 넣으면 PQC 확인·생성을 함께 요청합니다.</p>' : ""}
+  </section>`;
 }
 function renderOverview(item) {
   const signature=item.signature || {}, totals=displayCounts(item);
@@ -502,7 +790,7 @@ function renderOverview(item) {
     Error:["파일 분석을 마치지 못했습니다. 파일 형식과 오류 내용을 확인한 뒤 다시 시도하세요.","checks","오류 내용 보기"]
   };
   const [message,tab,action]=messages[item.state] || ["원본 파일로 다시 검증해 보세요.","checks","검사 상세 보기"];
-  return `<div class="overview-facts"><div><span>${term("서명자")}</span><strong>${esc(signature.common_name || "기록 없음")}</strong></div><div><span>${term("AI 생성 선언")}</span><strong>${item.ai === "declared" ? "기록에 있음" : "확인 가능한 선언 없음"}</strong></div></div><div class="next-step compact"><p>${esc(message)}</p>${tab ? `<button type="button" data-go-detail="${tab}">${esc(action)} →</button>` : ""}</div><p class="result-boundary">이 검사는 출처 기록을 확인합니다. 사진 속 장면의 사실 여부나 AI 사용 여부 자체를 판정하지는 않습니다.</p><p class="term-guide">밑줄 친 용어에 마우스를 올리거나 키보드로 선택하면 설명을 볼 수 있습니다.</p>`;
+  return `<div class="overview-facts"><div><span>${term("서명자")}</span><strong>${esc(signature.common_name || "기록 없음")}</strong></div><div><span>${term("AI 생성 선언")}</span><strong>${esc(aiOrigin(item).label)}</strong></div></div><div class="next-step compact"><p>${esc(message)}</p>${tab ? `<button type="button" data-go-detail="${tab}">${esc(action)} →</button>` : ""}</div><p class="result-boundary">이 검사는 출처 기록을 확인합니다. 사진 속 장면의 사실 여부나 AI 사용 여부 자체를 판정하지는 않습니다.</p><p class="term-guide">밑줄 친 용어에 마우스를 올리거나 키보드로 선택하면 설명을 볼 수 있습니다.</p>`;
 }
 function renderChecks(item) {
   const priority={failure:0,warning:1,informational:2,success:3},totals=displayCounts(item);
@@ -519,7 +807,12 @@ function renderJsonTree(value,depth=0) {
 }
 function renderJsonBox(label,value,open=false){return `<details class="code-details" ${open ? "open" : ""}><summary>${esc(label)}</summary><p class="scroll-hint">마우스를 이 영역 위에 놓고 스크롤하면 이 상자만 움직입니다. 끝에 닿으면 바깥 결과가 움직입니다.</p>${renderJsonTree(value)}<details class="json-raw"><summary>원문 텍스트 보기</summary><pre data-scroll-region>${esc(JSON.stringify(value,null,2))}</pre></details></details>`;}
 function renderHistory(item) {
-  return `<div class="history-intro"><h3>파일의 제작·편집 기록</h3><p>활성 ${term("Manifest")}에 기록된 작업 순서입니다. 파일에 기록되지 않은 단계는 추정하지 않습니다.</p></div>${renderActions(item)}<h3 class="subhead">Manifest와 재료 연결</h3>${renderChain(item)}${(item.ingredients || []).length ? renderJsonBox("이전 재료 기록 보기",item.ingredients) : ""}`;
+  const store=item.store || {}, readable=Boolean(store.active_manifest && store.manifests?.[store.active_manifest]);
+  const actions=Array.isArray(item.actions) ? item.actions : [], ingredients=Array.isArray(item.ingredients) ? item.ingredients : [];
+  const manifestCount=Object.keys(store.manifests || {}).length;
+  const warning=item.state === "Invalid" ? `<p class="history-warning">검증에 실패한 항목이 있습니다. 아래는 읽을 수 있었던 기록이며, 사용하기 전에 검사 상세에서 실패 원인을 확인하세요. <button type="button" data-go-detail="checks">검사 상세 보기 →</button></p>` : "";
+  const counts=readable ? `<p class="history-counts">읽은 출처 기록 ${manifestCount}개 · 현재 기록의 작업 ${actions.length}개 · 연결된 재료 ${ingredients.length}개</p>` : `<p class="history-counts">읽을 수 있는 현재 출처 기록이 없어 이력을 확인하지 못했습니다.</p>`;
+  return `<div class="history-intro"><h3>이 파일의 출처 이력</h3><p>파일에 연결된 기록에서 읽은 제작·편집 작업과 사용된 재료를 보여줍니다. 기록된 내용은 작성자의 주장으로, 실제 과정 전체나 사진의 진실을 보증하지 않습니다.</p>${counts}${warning}</div><section class="history-section"><h3>기록된 작업</h3><p class="history-guide">아래 순서는 기록에 담긴 순서이며 실제 작업의 시간순이나 전체 과정을 보장하지 않습니다. 기록된 시각도 인증된 시간이라는 뜻은 아닙니다.</p>${renderActions(item)}</section><section class="history-section"><h3>연결된 출처 기록</h3><p class="history-guide">현재 파일의 출처 기록과 함께 읽힌 다른 기록입니다. 서명자 이름은 기록된 인증서 정보이며 신뢰 여부는 검증 요약에서 확인하세요.</p>${renderChain(item)}</section><section class="history-section"><h3>연결된 재료</h3><p class="history-guide">제작이나 편집에 사용했다고 기록된 이전 파일 또는 콘텐츠입니다.</p>${renderHistoryIngredients(item)}${ingredients.length ? renderJsonBox("재료의 원본 기록 보기",ingredients) : ""}</section>`;
 }
 function renderManifest(item) {
   const store = item.store || {}, manifests = store.manifests || {}, ids = Object.keys(manifests);
@@ -602,8 +895,9 @@ function renderAnchors(item) {
   return `<div class="anchor-intro"><h3>공개 검증 참조</h3><p>${term("Manifest")}에 명시된 공개 참조만 보여줍니다. 외부 사이트의 기록 존재, 블록체인 확정, 소유권은 이 화면에서 자동 검증하지 않습니다.</p></div>${references.length ? `<div class="reference-list">${references.map(ref=>`<article><span>MANIFEST REFERENCE</span><code>${esc(ref.path)}</code><a href="${esc(ref.url)}" target="_blank" rel="noopener noreferrer">공개 참조 열기 ↗</a><small>${esc(ref.url)}</small></article>`).join("")}</div>` : `<div class="empty-anchor"><span>◇</span><h4>공개 앵커 정보가 없습니다.</h4><p>이 파일의 ${term("Manifest")}에서 블록체인 또는 공개 레지스트리 참조를 찾지 못했습니다. C2PA 서명 검증 결과와는 별개의 정보입니다.</p></div>`}<div class="timestamp-note"><strong>${term("서명 시간 정보")}</strong><p>${esc(signature.time || signature.timestamp || "인증된 타임스탬프 정보가 제공되지 않았습니다.")}</p><small>시간 문자열이 있어도 ${term("TSA")} 신뢰 검증 결과와 구분해서 읽어야 합니다.</small></div>`;
 }
 function renderDetail() {
+  $("#results").classList.toggle("pqc-view",state.detail === "pqc");
   const item=result(); if (!item) return;
-  if(!["overview","history","checks"].includes(state.detail))state.detail="overview";
+  if(!["pqc","overview","history","checks"].includes(state.detail))state.detail="overview";
   $$('[data-detail]').forEach(tab=>{
     const selected=tab.dataset.detail===state.detail;
     tab.classList.toggle("active",selected);tab.setAttribute("aria-selected",String(selected));tab.tabIndex=selected ? 0 : -1;
@@ -614,7 +908,7 @@ function renderDetail() {
   const expanded=target.dataset.viewKey === viewKey ? [...target.querySelectorAll("details[data-section][open]")].map(node=>node.dataset.section) : [];
   target.innerHTML = state.detail === "checks"
     ? `${renderChecks(item)}<div class="evidence-folders"><details data-section="technical"><summary>서명·검증 환경</summary>${renderSummary(item)}</details><details data-section="file"><summary>파일 정보</summary>${renderMetadata(item)}</details><details data-section="manifest"><summary>원본 출처 기록 · JSON</summary>${renderManifest(item)}</details><details data-section="anchors"><summary>시간 정보·공개 참조</summary>${renderAnchors(item)}</details></div>`
-    : state.detail === "history" ? `${renderHistory(item)}<details class="history-map" data-section="map"><summary>출처 연결을 그림으로 보기</summary>${renderStructure(item)}</details>` : renderOverview(item);
+    : state.detail === "history" ? `${renderHistory(item)}<details class="history-map" data-section="map"><summary>출처 연결을 그림으로 보기</summary>${renderStructure(item)}</details>` : state.detail === "pqc" ? renderPqResult(item) : renderOverview(item);
   for(const section of target.querySelectorAll("details[data-section]"))section.open=expanded.includes(section.dataset.section);
   target.dataset.viewKey=viewKey;
   $("#result-tabpanel").setAttribute("aria-labelledby",`detail-tab-${state.detail}`);
@@ -623,24 +917,21 @@ function selectDetail(name) {
   state.detail=name;state.checkFilter="all";renderDetail();
   $(".report-scroll").scrollTop=0;
 }
-function compareRow(label,a,b) { return `<div class="compare-row"><span>${esc(label)}</span><strong>${esc(a ?? "—")}</strong><strong>${esc(b ?? "—")}</strong></div>`; }
-function renderCompare() {
-  const section=$("#compare-section"); section.hidden=state.results.length<2;
-  if (section.hidden) return;
-  const choices=state.results.map((item,index)=>`<option value="${index}">${esc(item.filename)} · ${esc(stateLabels[item.state] || item.state)}</option>`).join("");
-  for(const name of ["a","b"]) {const select=$(`#compare-${name}`), previous=Number(select.value);select.innerHTML=choices;select.value=String(Number.isInteger(previous)&&previous>=0&&previous<state.results.length ? previous : name === "a" ? 0 : state.results.length-1);}
-  if($("#compare-a").value===$("#compare-b").value)$("#compare-b").value=$("#compare-a").value===String(state.results.length-1) ? "0" : String(state.results.length-1);
-  const a=state.results[Number($("#compare-a").value)],b=state.results[Number($("#compare-b").value)];
-  const ca=displayCounts(a),cb=displayCounts(b);
-  $("#compare-grid").innerHTML=`<div class="compare-header"><span>비교 항목</span><strong>${esc(a.filename)}</strong><strong>${esc(b.filename)}</strong></div>${compareRow("검증 상태",stateLabels[a.state] || a.state,stateLabels[b.state] || b.state)}${compareRow("서명자",a.signature?.common_name,b.signature?.common_name)}${compareRow("AI 선언",a.ai === "declared" ? "있음" : "확인되지 않음",b.ai === "declared" ? "있음" : "확인되지 않음")}${compareRow("검증 오류",ca.failure,cb.failure)}${compareRow("Manifest",a.manifest_count || 0,b.manifest_count || 0)}${compareRow("SHA-256",a.sha256,b.sha256)}<p>동일한 해시는 동일 파일 바이트를 뜻합니다. 상태 차이가 있으면 신뢰 정책과 검증 시각도 확인하세요.</p>`;
-}
 function render() {
   const item=result(); $("#results").hidden=!item; if(!item)return;
   document.body.classList.add("has-results");
-  $("#file-count").textContent=`${state.results.length} / 10`;
+  $("#file-count").textContent=`${state.results.length}개`;
+  item.ai_origin=aiOrigin(item);
+  const pageNotice=$("#page-analysis-notice"), batch=item.page_analysis;
+  pageNotice.hidden=!batch;
+  if(batch){const failures=Array.isArray(batch.failures) ? batch.failures : [];
+    pageNotice.innerHTML=`<strong>게시물 사진 검사: ${esc(batch.completed)} / ${esc(batch.total)}개 완료${batch.stopped ? " · 중단됨" : ""}</strong>${batch.aiFailed ? `<p>AI 설명을 생성하지 못해 기본 해설을 표시합니다. 결과에서 다시 요청할 수 있습니다.</p>` : ""}${failures.length ? `<details><summary>${failures.length}개 검사하지 못함 · 사유 보기</summary><ul>${failures.map(message=>`<li>${esc(message)}</li>`).join("")}</ul></details>` : ""}`;
+  }else pageNotice.innerHTML="";
   $("#preview-filename").textContent=item.filename || "파일 미리보기";
   $("#preview-subtitle").textContent=`${(item.mime || "파일").split("/").pop().toUpperCase()} · ${sizes(item.size)}`;
-  renderBatch(); renderVerdict(item); renderReadout(item); renderAiPanel(item); renderPreview(item); renderDetail(); renderCompare();
+  $("#ai-origin").innerHTML=renderAiOrigin(item);
+  renderActivity(item);
+  renderBatch(); renderVerdict(item); renderReadout(item); renderAiPanel(item); renderPreview(item); renderDetail();
   const saved=item.report_saved !== false;
   $("#copy-live").hidden=!saved || !item.source_url;
   $("#copy-report").hidden=!saved || !item.id;
@@ -658,25 +949,42 @@ function reportURL(id) {const url=new URL("/viewer/",location.origin);url.search
 function liveURL(item) {const url=new URL("/viewer/",location.origin);url.searchParams.set("url",item.source_url);url.searchParams.set("trust",item.trust_profile || "standard");return url.href;}
 
 $("#tab-file").onclick=()=>setMode("file"); $("#tab-url").onclick=()=>setMode("url");
-$("#browser-mode").onchange=updateProcessingMode;
-function updateTrustProfileNote(){
-  const selected=$("#trust-profile").value;
-  $("#trust-profile-note").innerHTML=selected === "lab"
-    ? `${term("프로젝트 CA 신뢰")} · 프로젝트 자체 ${term("CA")}를 Trust Anchor로 등록했습니다. 이 CA가 발급한 인증서로 서명된 파일은 서명자를 신뢰할 수 있습니다.`
-    : `${term("기본 SDK 목록")} · SDK 기본 신뢰 설정만 사용합니다. 프로젝트 ${term("CA")}로 서명된 파일은 서명이 유효해도 신뢰 미확인으로 표시됩니다.`;
-}
-$("#trust-profile").addEventListener("change",updateTrustProfileNote);
 $("#dropzone").onclick=()=>{if(!state.busy)$("#file-input").click();};
 $("#dropzone").onkeydown=event=>{if(event.key === "Enter" || event.key === " "){event.preventDefault();$("#file-input").click();}};
-$("#file-input").onchange=event=>stageFiles(event.target.files);
-for(const kind of ["dragenter","dragover"])$("#dropzone").addEventListener(kind,event=>{event.preventDefault();$("#dropzone").classList.add("dragging");});
-for(const kind of ["dragleave","drop"])$("#dropzone").addEventListener(kind,event=>{event.preventDefault();$("#dropzone").classList.remove("dragging");});
-$("#dropzone").addEventListener("drop",event=>stageFiles(event.dataTransfer.files));
+$("#file-input").onchange=event=>intakeFiles(event.target.files);
 $("#url-form").onsubmit=event=>{event.preventDefault();verifyURL($("#url-input").value.trim());};
 $$("[data-sample]").forEach(button=>button.onclick=()=>verifySample(button.dataset.sample));
-function showIntake(){navigatePage("verify");window.scrollTo({top:0,behavior:"instant"});setMode(state.mode);}
+function showIntake(){navigatePage("verify");window.scrollTo({top:0,behavior:"instant"});$("#return-results").hidden=!result();setMode(state.mode);}
 $("#new-check").onclick=showIntake;
 $("#new-check-secondary").onclick=showIntake;
+$("#return-results").onclick=()=>{clearPending();render();};
+function isFileDrag(event){return Array.from(event.dataTransfer?.types || []).includes("Files");}
+function intakeAcceptsDrop(){return !state.busy && state.mode === "file" && !document.body.classList.contains("has-results") && routeFromHash() === "verify" && !document.querySelector("dialog[open]");}
+function clearIntakeDrop(){ $("#dropzone").classList.remove("dragging"); $("#upload-preview").classList.remove("dragging"); }
+for(const kind of ["dragenter","dragover"])window.addEventListener(kind,event=>{
+  if(!isFileDrag(event))return;
+  event.preventDefault();
+  if(intakeAcceptsDrop()){$("#dropzone").classList.add("dragging");$("#upload-preview").classList.add("dragging");}
+});
+window.addEventListener("dragleave",event=>{if(!event.relatedTarget)clearIntakeDrop();});
+window.addEventListener("dragend",clearIntakeDrop);
+window.addEventListener("drop",event=>{
+  if(!isFileDrag(event))return;
+  event.preventDefault();clearIntakeDrop();
+  if(intakeAcceptsDrop()){
+    const files=Array.from(event.dataTransfer.files || []);
+    if(files.length)intakeFiles(files);
+  }
+});
+$("#files-toggle").onclick=()=>{
+  const button=$("#files-toggle"), content=$("#files-content");
+  const expanded=button.getAttribute("aria-expanded") === "true";
+  content.hidden=expanded;$("#results").classList.toggle("files-collapsed",expanded);
+  button.setAttribute("aria-expanded",String(!expanded));
+  button.setAttribute("aria-label",expanded ? "분석 파일 목록 펼치기" : "분석 파일 목록 접기");
+  button.innerHTML=expanded ? "〉 <span>파일 목록 펼치기</span>" : "〈 <span>파일 목록 접기</span>";
+};
+
 $("#batch-list").onclick=event=>{const button=event.target.closest("[data-result-index]");if(!button)return;state.active=Number(button.dataset.resultIndex);state.selectedManifest=result().store?.active_manifest || null;render();};
 $(".detail-tabs").onclick=event=>{const button=event.target.closest("[data-detail]");if(!button)return;selectDetail(button.dataset.detail);};
 $(".detail-tabs").onkeydown=event=>{
@@ -687,7 +995,7 @@ $(".detail-tabs").onkeydown=event=>{
   const next=event.key === "Home" ? 0 : event.key === "End" ? tabs.length-1 : (current+(event.key === "ArrowRight" ? 1 : -1)+tabs.length)%tabs.length;
   selectDetail(tabs[next].dataset.detail);tabs[next].focus();
 };
-$("#detail-panel").onclick=event=>{const button=event.target.closest("[data-check-filter]");if(button){state.checkFilter=button.dataset.checkFilter;renderDetail();$(`[data-check-filter="${state.checkFilter}"]`).focus({preventScroll:true});}const jump=event.target.closest("[data-go-detail]");if(jump){selectDetail(jump.dataset.goDetail);$(`[data-detail="${state.detail}"]`).focus();}if(event.target.closest("#manifest-download")){const item=result();exportBlob(JSON.stringify(item.store || {},null,2),reportName(item,"manifest.json"),"application/json");}if(event.target.closest("#structure-download")){const item=result();exportBlob(buildStructureSvg(item),reportName(item,"structure.svg"),"image/svg+xml;charset=utf-8");toast("출처 구조 그림을 저장했습니다.");}if(event.target.closest("#structure-expand"))$("#structure-dialog").showModal();};
+$("#detail-panel").onclick=async event=>{const current=result();if(event.target.closest("[data-unified-resume]")){await resumeUnified(current);return;}if(event.target.closest("[data-unified-report]")){openReportDialog();return;}if(event.target.closest("[data-unified-download]")){try{const job=current.conversion_v4||current.pqc_process?.job,blob=await v4Asset(job);exportBlob(blob,job.result.filename,blob.type);}catch(cause){toast(cause.message);}return;}const copyButton=event.target.closest("[data-pq-copy]");if(copyButton){navigator.clipboard.writeText(copyButton.dataset.pqCopy).then(()=>toast("복사했습니다.")).catch(()=>toast("복사할 수 없습니다."));return;}if(event.target.closest("[data-open-conversion]")){navigatePage("verify");return;}const button=event.target.closest("[data-check-filter]");if(button){state.checkFilter=button.dataset.checkFilter;renderDetail();$(`[data-check-filter="${state.checkFilter}"]`).focus({preventScroll:true});}const jump=event.target.closest("[data-go-detail]");if(jump){selectDetail(jump.dataset.goDetail);$(`[data-detail="${state.detail}"]`).focus();}if(event.target.closest("#manifest-download")){const item=result();exportBlob(JSON.stringify(item.store || {},null,2),reportName(item,"manifest.json"),"application/json");}if(event.target.closest("#structure-download")){const item=result();exportBlob(buildStructureSvg(item),reportName(item,"structure.svg"),"image/svg+xml;charset=utf-8");toast("출처 구조 그림을 저장했습니다.");}if(event.target.closest("#structure-expand"))$("#structure-dialog").showModal();};
 $("#detail-panel").onchange=event=>{if(event.target.id === "manifest-select"){state.selectedManifest=event.target.value;renderDetail();}};
 function describeMapNode(event){
   const node=event.target.closest?.("[data-node]");if(!node || !$("#node-inspector"))return;
@@ -720,12 +1028,15 @@ function saveReportProfile(options){
   try{localStorage.setItem(REPORT_PROFILE_KEY,JSON.stringify(Object.fromEntries(Object.keys(REPORT_PROFILE_FIELDS).map(key=>[key,options[key] || ""]))));}catch{}
 }
 function reportOptions(){
-  const value=selector=>$(selector).value.trim();
-  return {applicant:value("#report-applicant"),submitTo:value("#report-submit-to"),purpose:value("#report-purpose"),
-    includePreview:$("#report-preview").checked,register:$("#report-register").checked,
-    phoneToken:identityState.phone?.token || null,phone:identityState.phone ? {phone_masked:identityState.phone.phone_masked,verified_at:identityState.phone.verified_at} : null};
+  const type=$('input[name=report-type]:checked')?.value||'submission';
+  const options={includePreview:true,register:true};
+  if(type==='submission')for(const [key,selector] of Object.entries({applicant:'#report-applicant',contactPhone:'#report-contact-phone',submitTo:'#report-submit-to',purpose:'#report-purpose'}))options[key]=$(selector).value.trim();
+  return options;
 }
-function syncReportMeta(){const type=$("input[name=report-type]:checked")?.value || "summary";$("#report-meta").open=type !== "summary";}
+function syncReportMeta(){
+  const submission=$('input[name=report-type]:checked')?.value==='submission';
+  $('#report-meta').hidden=!submission;$('#report-meta').open=submission;
+}
 $$("input[name=report-type]").forEach(input=>input.addEventListener("change",syncReportMeta));
 async function reportEnvironment(item){
   if(item.processing_mode === "browser")return null;
@@ -755,27 +1066,18 @@ function hasPqEvidence(item){
   const store=item?.store || {},active=(store.manifests || {})[store.active_manifest] || {};
   return (active.assertions || []).some(assertion=>String(assertion.label || "").startsWith("org.pq-c2pa.p1"));
 }
-const PQ_REPORT_NOTE=$("#report-pq-note").textContent;
 function openReportDialog(preferred){
   const item=result();if(!item)return;
   $("#report-dialog-file").textContent=`${item.filename || "파일"} · ${stateLabels[item.state] || "상태 미확인"}`;
   $("#report-error").hidden=true;
-  const pqInput=$("input[name=report-type][value=pq]"),pqReady=hasPqEvidence(item);
-  pqInput.disabled=!pqReady;
-  $("#report-pq-note").textContent=pqReady ? PQ_REPORT_NOTE : "P1 양자내성 증거가 있는 변환본에서만 만들 수 있습니다. PQ 변환 화면에서 변환한 뒤 새 이미지를 검증하세요.";
   const wanted=preferred && $(`input[name=report-type][value=${preferred}]`);
-  if(wanted && !wanted.disabled)wanted.checked=true;
-  else if(pqInput.checked && !pqReady)$("input[name=report-type][value=summary]").checked=true;
+  if(wanted)wanted.checked=true;
   loadReportProfile();syncReportMeta();
   $("#report-dialog").showModal();
 }
 $("#download-pdf").onclick=()=>openReportDialog();
 $("#report-close").onclick=()=>$("#report-dialog").close();
 $("#report-dialog").addEventListener("click",event=>{if(event.target === $("#report-dialog"))$("#report-dialog").close();});
-// Optional applicant check without login: a one-time SMS code to the applicant's mobile phone.
-// The token lasts for this tab only; the issuance record keeps the masked number and a keyed hash.
-const IDENTITY_KEY="pq-c2pa-report-phone";
-const identityState={phone:null};
 function apiMessage(data){const detail=data?.detail;return typeof detail === "string" ? detail : Array.isArray(detail) ? "입력 형식을 확인하세요." : "";}
 async function postJSON(url,body){
   const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
@@ -783,33 +1085,6 @@ async function postJSON(url,body){
   if(!response.ok){const error=new Error(apiMessage(data) || `요청을 처리하지 못했습니다(${response.status}).`);error.status=response.status;throw error;}
   return data;
 }
-function identityMessage(target,text,kind=""){const node=$(target);node.textContent=text;node.className=`identity-status${kind ? ` ${kind}` : ""}`;}
-function saveIdentity(){try{identityState.phone ? sessionStorage.setItem(IDENTITY_KEY,JSON.stringify(identityState.phone)) : sessionStorage.removeItem(IDENTITY_KEY);}catch{}}
-function renderIdentity(){
-  if(identityState.phone)identityMessage("#report-phone-status",`인증됨 · ${identityState.phone.phone_masked} (${String(identityState.phone.verified_at).slice(0,16).replace("T"," ")}) · 이 탭을 닫으면 다시 인증합니다`,"ok");
-}
-try{const saved=JSON.parse(sessionStorage.getItem(IDENTITY_KEY) || "null");if(saved?.token && Date.parse(saved.expires_at)>Date.now())identityState.phone=saved;}catch{}
-renderIdentity();
-$("#report-phone").addEventListener("input",()=>{if(identityState.phone){identityState.phone=null;saveIdentity();identityMessage("#report-phone-status","");}});
-$("#report-phone-send").onclick=async()=>{
-  const phone=$("#report-phone").value.trim(),button=$("#report-phone-send");
-  if(!phone){identityMessage("#report-phone-status","휴대폰 번호를 입력하세요.","error");return;}
-  button.disabled=true;
-  try{const data=await postJSON("/engine/api/identity/phone/start",{phone});
-    $("#report-phone-code-row").hidden=false;$("#report-phone-code").value="";$("#report-phone-code").focus();
-    identityMessage("#report-phone-status",data.delivery === "server-log" ? `로컬 시험 모드: ${data.phone_masked}의 인증번호를 서버 로그에 기록했습니다. 5분 안에 입력하세요.` : `${data.phone_masked}로 인증번호를 보냈습니다. 5분 안에 입력하세요.`);
-  }catch(cause){identityMessage("#report-phone-status",cause.message,"error");}
-  finally{button.disabled=false;}
-};
-$("#report-phone-verify").onclick=async()=>{
-  const phone=$("#report-phone").value.trim(),code=$("#report-phone-code").value.trim(),button=$("#report-phone-verify");
-  if(!/^\d{6}$/.test(code)){identityMessage("#report-phone-status","문자로 받은 6자리 숫자를 입력하세요.","error");return;}
-  button.disabled=true;
-  try{identityState.phone=await postJSON("/engine/api/identity/phone/verify",{phone,code});saveIdentity();$("#report-phone-code-row").hidden=true;renderIdentity();}
-  catch(cause){identityMessage("#report-phone-status",cause.message,"error");}
-  finally{button.disabled=false;}
-};
-
 // Issue → build → seal. The server only receives hashes and the result summary; when it
 // cannot be reached the PDF is still produced and clearly marked as unregistered.
 async function requestIssuance(module,item,type,options){
@@ -817,10 +1092,9 @@ async function requestIssuance(module,item,type,options){
   try{return await postJSON("/engine/api/report-issuances",body);}
   catch(cause){
     if(cause.status === 400){
-      if(/휴대폰/.test(cause.message)){identityState.phone=null;saveIdentity();identityMessage("#report-phone-status",cause.message,"error");}
       throw cause;
     }
-    return {offline:true,reason:cause.status ? `발급 서버 응답 ${cause.status}` : "발급 서버에 연결하지 못함"};
+    return {offline:true,reason:cause.status === 405 ? "발급 서버가 요청 방식을 지원하지 않음(HTTP 405)" : cause.status ? `발급 서버 응답 ${cause.status}` : "발급 서버에 연결하지 못함"};
   }
 }
 async function sealIssuance(issuance,bytes){
@@ -833,18 +1107,17 @@ async function sealIssuance(issuance,bytes){
 }
 $("#report-generate").onclick=async()=>{
   const item=result();if(!item)return;
-  const type=$("input[name=report-type]:checked")?.value || "summary";
+  const type=$("input[name=report-type]:checked")?.value || "submission";
   const button=$("#report-generate"),notice=$("#report-error");
   button.disabled=true;notice.hidden=true;
   try{
-    if($("#report-phone").value.trim() && !identityState.phone)throw new Error("휴대폰 번호를 입력했다면 인증을 먼저 마쳐 주세요.");
-    const options=reportOptions();saveReportProfile(options);
+    const options=reportOptions();if(type==="submission")saveReportProfile(options);
     button.textContent="준비 중…";
-    const [module,environment,currentImageUrl]=await Promise.all([import("./pdf-report.js?v=20261107-applicant"),reportEnvironment(item),options.includePreview ? currentImageURL(item) : null]);
+    const [module,environment,currentImageUrl]=await Promise.all([import("./pdf-report.js?v=20261117-haetae"),reportEnvironment(item),options.includePreview ? currentImageURL(item) : null]);
     button.textContent="발급 번호 받는 중…";
     const issuance=options.register ? await requestIssuance(module,item,type,options) : null;
     button.textContent="PDF 만드는 중…";
-    const bytes=await module.buildPdfReport(item,type,{...options,environment,currentImageUrl,conversion:type === "pq" ? conversionFor(item) : null,issuance});
+    const bytes=await module.buildPdfReport(item,type,{...options,environment,currentImageUrl,conversion:conversionFor(item),issuance});
     const registered=Boolean(issuance && !issuance.offline);
     const sealed=registered ? await sealIssuance(issuance,bytes) : false;
     exportBlob(bytes,pdfReportName(item,type),"application/pdf");
@@ -857,11 +1130,8 @@ $("#report-generate").onclick=async()=>{
 
 $("#download-html").onclick=()=>{const item=result();if(item.report_saved !== false){location.href=`/engine/api/reports/${encodeURIComponent(item.id)}/download?format=html`;return;}const source=`<!doctype html><html lang="ko"><meta charset="utf-8"><title>PQ-C2PA 검증 보고서</title><style>body{font:16px sans-serif;max-width:900px;margin:45px auto;padding:20px;line-height:1.6}pre{overflow:auto;padding:22px;background:#f5eee4;font-size:12px}</style><h1>${esc(item.filename)} · ${esc(stateLabels[item.state] || item.state)}</h1><p>${item.processing_mode === "browser" ? "브라우저 안에서 생성한 보고서입니다. 파일은 서버로 전송되지 않았습니다." : "서버 기록을 저장하지 않은 세션에서 생성한 보고서입니다."}</p><p>출처 검증은 콘텐츠의 사실 여부를 보증하지 않습니다.</p><pre>${esc(JSON.stringify(item,null,2))}</pre></html>`;exportBlob(source,reportName(item,"html"),"text/html");};
 $("#delete-report").onclick=async()=>{const item=result();try{await responseJSON(await fetch(`/engine/api/reports/${encodeURIComponent(item.id)}`,{method:"DELETE"}));item.report_saved=false;render();toast("서버 보고서를 삭제했습니다.");}catch(cause){error(cause.message);}};
-for(const name of ["a","b"])$(`#compare-${name}`).onchange=()=>renderCompare();
 
 const params=new URLSearchParams(location.search);
-if(params.has("trust") && ["standard","lab"].includes(params.get("trust"))) $("#trust-profile").value=params.get("trust");
-updateTrustProfileNote();
 if(params.has("report")) loadReport(params.get("report"));
 else if(params.has("url")){setMode("url");$("#url-input").value=params.get("url");verifyURL(params.get("url"));}
 
@@ -869,13 +1139,13 @@ else if(params.has("url")){setMode("url");$("#url-input").value=params.get("url"
 
 // Top navigation presents the reference material as separate pages while keeping the verifier state in memory.
 function routeFromHash(){
-  if(location.hash === "#convert") return "convert";
+  if(location.hash === "#convert") return "verify";
   if(location.hash === "#guide") return "guide";
   if(location.hash === "#about-c2pa") return "about";
   return "verify";
 }
 function showPage(page,{preserveResult=false}={}){
-  document.body.classList.toggle("show-convert",page === "convert");
+  document.body.classList.remove("show-convert");
   document.body.classList.toggle("show-guide",page === "guide");
   if(!preserveResult)document.body.classList.remove("has-results");
   $$('[data-page]').forEach(link => {
@@ -887,6 +1157,7 @@ function showPage(page,{preserveResult=false}={}){
   else if(!preserveResult)window.scrollTo({top:0,behavior:"instant"});
 }
 function navigatePage(page){
+  if(page === "convert")page="verify";
   const hash=page === "about" ? "about-c2pa" : page;
   history.pushState(null,"",`${location.pathname}#${hash}`);
   showPage(page);
@@ -900,92 +1171,33 @@ window.addEventListener("popstate",syncPageFromLocation);
 window.addEventListener("hashchange",syncPageFromLocation);
 if(!params.has("report")&&!params.has("url"))showPage(routeFromHash());
 
-// The conversion page calls the current local M0 -> P1 -> M1 API.
-const conversionState={file:null,busy:false,resultName:""};
-function conversionMessage(message,{failure=false}={}){
-  const target=$(failure ? "#conversion-error" : "#conversion-progress");
-  const other=$(failure ? "#conversion-progress" : "#conversion-error");
-  other.hidden=true;target.textContent=message;target.hidden=!message;
-}
-function selectConversionFile(file){
-  const valid=file && /\.(jpe?g|png)$/i.test(file.name) && ["image/jpeg","image/png",""].includes(file.type);
-  if(!valid){conversionState.file=null;$("#conversion-filename").textContent="선택한 파일이 없습니다";$("#conversion-submit").disabled=true;conversionMessage("JPEG 또는 PNG 이미지를 선택해 주세요.",{failure:true});return;}
-  if(file.size>20*1024*1024){conversionState.file=null;$("#conversion-filename").textContent="선택한 파일이 없습니다";$("#conversion-submit").disabled=true;conversionMessage("파일은 최대 20 MB까지 변환할 수 있습니다.",{failure:true});return;}
-  conversionState.file=file;$("#conversion-filename").textContent=`${file.name} · ${sizes(file.size)}`;
-  $("#conversion-error").hidden=true;$("#conversion-progress").hidden=true;
-  $("#conversion-result").hidden=true;$("#conversion-submit").disabled=conversionState.busy;
-}
-$("#conversion-drop").onclick=()=>$("#conversion-file").click();
-$("#conversion-file").onchange=event=>selectConversionFile(event.target.files[0]);
-for(const type of ["dragenter","dragover"])$("#conversion-drop").addEventListener(type,event=>{event.preventDefault();event.currentTarget.classList.add("dragging");});
-for(const type of ["dragleave","drop"])$("#conversion-drop").addEventListener(type,event=>{event.preventDefault();event.currentTarget.classList.remove("dragging");});
-$("#conversion-drop").addEventListener("drop",event=>selectConversionFile(event.dataTransfer.files[0]));
-async function waitForConversion(job){
-  if(job.status === "COMPLETED" || job.status === "FAILED")return job;
-  const identifier=String(job.conversion_id || "");
-  if(!/^conv_[0-9a-f]{32}$/.test(identifier))throw new Error("변환 작업 번호를 확인할 수 없습니다.");
-  for(let attempt=0;attempt<80;attempt++){
-    await new Promise(resolve=>setTimeout(resolve,1500));
-    const response=await responseJSON(await fetch(`/api/v1/conversions/${identifier}`,{cache:"no-store"}));
-    job=response.data;
-    conversionMessage(`변환 중 · ${job.stage || "처리 중"} (${job.progress_percent || 0}%)`);
-    if(job.status === "COMPLETED" || job.status === "FAILED")return job;
-  }
-  throw new Error("변환이 오래 걸리고 있습니다. 잠시 후 다시 시도해 주세요.");
-}
-async function renderConversionResult(job){
-  const identifier=String(job.conversion_id || "");
-  const validationId=String(job.result?.validation_id || "");
-  const trusted=job.result?.trust_status === "TRUSTED";
-  const safeId=/^conv_[0-9a-f]{32}$/.test(identifier);
-  let p1Status="확인 중";
-  if(/^val_[0-9a-f]{32}$/.test(validationId)){
-    try{const response=await responseJSON(await fetch(`/api/v1/validations/${validationId}`,{cache:"no-store"}));
-      const check=response.data?.checks?.find(item=>item.name === "P1_ML_DSA_SIGNATURE");
-      p1Status=check?.status === "VALID" ? "서명 확인" : check?.status === "INVALID" ? "서명 오류" : "검사 기록 확인 필요";
-    }catch{p1Status="검사 기록을 불러오지 못함";}
-  }
-  const source=job.source || {},output=job.result || {};
-  rememberConversion(job);
-  conversionState.resultName=String(output.filename || "pq-c2pa-result.jpg").split(/[\\/]/).pop();
-  const target=$("#conversion-result");
-  target.innerHTML=`<div class="conversion-result-head"><span class="conversion-result-icon" aria-hidden="true">${trusted ? "✓" : "!"}</span><div><span class="section-label">CONVERSION RESULT</span><h2>${trusted ? "PQ 변환이 완료되었습니다" : "변환 결과를 확인해 주세요"}</h2><p>${trusted ? "새 이미지의 C2PA와 P1 서명을 검증했습니다." : "최종 신뢰 상태를 확인한 뒤 파일을 사용하세요."}</p></div></div><div class="conversion-result-grid"><div><span>기존 이미지 M0</span><strong>${esc(source.filename || "이미지")}</strong><small>기존 서명 ${source.classic_c2pa?.validation_status === "VALID" ? "확인" : "확인 필요"}</small></div><div><span>P1 양자내성 증거</span><strong>ML-DSA-65</strong><small>${esc(p1Status)}</small></div><div><span>새 이미지 M1</span><strong>${esc(output.filename || "결과 이미지")}</strong><small>최종 상태 ${trusted ? "신뢰 확인" : esc(output.trust_status || "미확인")}</small></div></div><div class="conversion-result-actions">${trusted && safeId ? `<a class="conversion-download" href="/api/v1/conversions/${identifier}/asset" download>변환 이미지 다운로드 ↓</a><button type="button" id="conversion-verify-output" data-conversion-id="${identifier}">새 이미지 다시 검증하기 →</button><button type="button" id="conversion-report" class="conversion-report" data-conversion-id="${identifier}">PQ 변환 보고서 받기 ↓</button>` : ""}</div><p class="conversion-result-note">실험용 로컬 CA를 사용한 결과입니다. 공개 신뢰 목록의 인증이나 이미지 내용의 진실성을 보증하지 않습니다.</p>`;
-  target.hidden=false;
-}
-$("#conversion-form").onsubmit=async event=>{
-  event.preventDefault();if(conversionState.busy || !conversionState.file)return;
-  conversionState.busy=true;$("#conversion-submit").disabled=true;$("#conversion-result").hidden=true;
-  conversionMessage("기존 서명을 확인하고 PQ 증거를 생성하는 중입니다…");
-  try{
-    const form=new FormData();form.append("file",conversionState.file);form.append("preserve_non_c2pa_metadata","true");
-    const response=await responseJSON(await fetch("/api/v1/conversions",{method:"POST",body:form}));
-    const job=await waitForConversion(response.data);
-    if(job.status !== "COMPLETED")throw new Error(job.error?.message || "변환을 완료하지 못했습니다.");
-    await renderConversionResult(job);
-    conversionMessage("변환과 최종 검증을 마쳤습니다.");
-  }catch(cause){
-    let message=cause.message || "변환 중 오류가 발생했습니다.";
-    if(message.includes("Classic C2PA M0") || message.includes("CLASSIC_C2PA_INVALID"))message="이 이미지에는 변환에 필요한 신뢰되는 기존 C2PA 서명이 없습니다. 먼저 서명 검증 화면에서 결과를 확인해 주세요.";
-    else if(message.includes("OpenSSL 3.5") || message.includes("KEY_SERVICE_UNAVAILABLE"))message="이 Mac의 양자내성 서명 환경을 사용할 수 없습니다. OpenSSL 3.5 이상이 설치되어 있는지 확인해 주세요.";
-    conversionMessage(message,{failure:true});
-  }
-  finally{conversionState.busy=false;$("#conversion-submit").disabled=!conversionState.file;}
-};
-// Verify the converted image (M1) on the verify page; the PQ report is built from that record.
-$("#conversion-result").addEventListener("click",async event=>{
-  const button=event.target.closest("#conversion-verify-output,#conversion-report");if(!button)return;
-  const identifier=button.dataset.conversionId;if(!/^conv_[0-9a-f]{32}$/.test(identifier))return;
-  button.disabled=true;
-  try{const response=await fetch(`/api/v1/conversions/${identifier}/asset`);if(!response.ok)throw new Error("변환 이미지를 불러오지 못했습니다.");
-    const blob=await response.blob();const type=blob.type || "image/jpeg";
-    const file=new File([blob],conversionState.resultName || `pq-c2pa-result.${type === "image/png" ? "png" : "jpg"}`,{type});
-    $("#trust-profile").value="lab";updateTrustProfileNote();
-    navigatePage("verify");await verifyFiles([file]);
-    if(button.id === "conversion-report" && result())openReportDialog("pq");
-  }catch(cause){conversionMessage(cause.message,{failure:true});}
-  finally{button.disabled=false;}
+const unifiedReady=Promise.all([import('./conversion-v4.js?v=20261117-haetae'),import('./unified-processing.js?v=20261117-haetae')]).then(([module,pipeline])=>{
+  v4Module=module;
+  module.apiJSON('/health').then(async config=>{
+    const node=$('#unified-connection-note');
+    node.textContent=config.status==='ok'?'서버 연결 확인 · 이미지 업로드 후 Classic 및 PQC 검증을 진행합니다.':'서버 상태를 확인하지 못했습니다.';
+  }).catch(()=>{$('#unified-connection-note').textContent='웹 서버 연결 상태를 확인하지 못했습니다. 서버 실행 상태를 확인해 주세요.';});
+  return pipeline;
 });
-
+async function v4Asset(job){
+  const response=await fetch(v4Module.assetPath(job),{cache:'no-store'});
+  if(!response.ok){let body={};try{body=await response.json();}catch{}throw Error(body.detail||body.error?.message||`파일 다운로드 실패 (${response.status})`);}
+  const blob=await response.blob();if(!['image/png','image/jpeg'].includes(blob.type))throw Error('서버가 결과 이미지 형식을 반환하지 않았습니다.');return blob;
+}
+$('#unified-stop').onclick=()=>activeUnifiedTask?.pause();
+async function resumeUnified(item){
+  const task=unifiedTasks.get(item.id);if(!task||state.busy)return;
+  setBusy(true);activeUnifiedTask=task;
+  try{
+    const {item:updated,file}=await task.resume();
+    const index=state.results.findIndex(entry=>entry.id===item.id);if(index<0)return;
+    updated.id=item.id;updated.report_saved=false;state.results[index]=updated;
+    const previous=state.localUrls.get(item.id);if(previous)URL.revokeObjectURL(previous);
+    state.localUrls.set(item.id,URL.createObjectURL(file));
+    for(const mode of ['simple','detail']){state.explanations.delete(explanationKey(item,mode));state.explainErrors.delete(explanationKey(item,mode));}
+    render();
+  }catch(cause){toast(cause.message);}finally{activeUnifiedTask=null;setBusy(false);progress('',false);$('#unified-stop').hidden=true;}
+}
 // Image generation uses the existing server endpoint; the secret stays on the server.
 const aiState={blob:null,url:null,available:false,busy:false};
 function aiError(message){const target=$("#ai-error");target.textContent=message;target.hidden=!message;}
@@ -993,14 +1205,21 @@ async function checkAiAvailability(){
   const status=$("#ai-api-status"),button=$("#ai-generate");
   status.textContent="생성 API 연결 상태 확인 중…";button.disabled=true;
   try{
-    const response=await fetch("/engine/api/health",{cache:"no-store"});
-    const health=await responseJSON(response);
-    aiState.available=health.ai_generation === true;
-    status.textContent=aiState.available ? `생성 API 연결됨 · ${health.ai_model || "이미지 모델"}` : "생성 API 키가 아직 설정되지 않았습니다. 서버에 OPENAI_API_KEY를 설정한 뒤 다시 열어 주세요.";
+    let response=await fetch('/api/v1/service-health/ai',{cache:'no-store'});
+    if(response.status===404){
+      // Explicit optional lab mode retains its original provider adapter.
+      response=await fetch('/engine/api/health',{cache:'no-store'});
+      const health=await responseJSON(response);
+      aiState.available=health.ai_generation===true;
+      status.textContent=aiState.available?'이미지 생성 기능이 설정되어 있습니다. 실제 생성 결과는 요청 후 확인합니다.':'이미지 생성 서버가 아직 준비되지 않았습니다.';
+    }else{
+      const [{aiConnection},health]=await Promise.all([import('./connection-status.js?v=20261117-results'),responseJSON(response)]);
+      const connection=aiConnection(health);aiState.available=connection.available;status.textContent=connection.message;
+    }
     status.classList.toggle("unavailable",!aiState.available);
     button.disabled=!aiState.available;
   }catch{
-    aiState.available=false;status.textContent="로컬 생성 서버에 연결할 수 없습니다.";status.classList.add("unavailable");button.disabled=true;
+    aiState.available=false;status.textContent="이미지 생성 서버에 연결할 수 없습니다.";status.classList.add("unavailable");button.disabled=true;
   }
 }
 function closeAiDialog(){if($("#ai-dialog").open)$("#ai-dialog").close();}
@@ -1013,7 +1232,7 @@ $("#ai-form").addEventListener("submit",async event=>{
   event.preventDefault();if(aiState.busy)return;
   const prompt=$("#ai-prompt").value.trim();
   if(prompt.length<8){aiError("이미지 설명을 8자 이상 입력해 주세요.");$("#ai-prompt").focus();return;}
-  if(!aiState.available){aiError("생성 API 키를 서버에 설정해야 합니다.");return;}
+  if(!aiState.available){aiError("이미지 생성 서버 연결을 확인해 주세요.");return;}
   const button=$("#ai-generate"),idleContent=button.innerHTML;aiState.busy=true;button.disabled=true;button.textContent="이미지 생성 중…";aiError("");
   try{
     const response=await fetch("/engine/api/ai/generate",{
@@ -1054,20 +1273,29 @@ function clearPending(){
   for(const entry of pendingState.items)if(entry.url)URL.revokeObjectURL(entry.url);
   pendingState.items=[];
   $("#upload-preview").hidden=true;$("#panel-file").classList.remove("has-pending");
+  $("#dropzone h2").textContent="이미지를 놓거나 클릭해서 선택하세요";
+}
+function refreshPendingDuplicates(){
+  const seen=new Set(state.results.map(item=>item.sha256).filter(Boolean));
+  for(const entry of pendingState.items){
+    entry.duplicate=Boolean(entry.hash) && seen.has(entry.hash);
+    if(entry.hash)seen.add(entry.hash);
+  }
 }
 async function stageFiles(files){
   if(state.busy)return;
   clearError();
   const incoming=[...files];$("#file-input").value="";
   if(!incoming.length)return;
-  const analyzed=new Set(state.results.map(item=>item.sha256).filter(Boolean));
+  const added=[];
   for(const file of incoming){
     const suffix=file.name.split(".").pop()?.toLowerCase();
-    const entry={file,id:`${Date.now()}_${Math.random().toString(16).slice(2)}`,url:"",problem:"",duplicate:false,dimensions:"",hash:""};
-    if(!FORMAT_EXTENSIONS.has(suffix) && !(file.type || "").startsWith("image/"))entry.problem="이미지 파일만 분석할 수 있습니다.";
-    else if(file.size > ($("#browser-mode").checked ? BROWSER_MAX_SIZE : SERVER_MAX_SIZE))entry.problem="파일 크기 제한을 넘었습니다.";
+    const entry={file,id:`${Date.now()}_${Math.random().toString(16).slice(2)}`,url:"",problem:"",duplicate:false,dimensions:"",hash:"",hashPending:false};
+    if(!FORMAT_EXTENSIONS.has(suffix))entry.problem="JPG 또는 PNG 이미지만 분석할 수 있습니다.";
+    else if(file.size > SERVER_MAX_SIZE)entry.problem="파일 크기 제한을 넘었습니다.";
     else entry.url=URL.createObjectURL(file);
-    pendingState.items.push(entry);
+    if(!entry.problem)entry.hashPending=true;
+    pendingState.items.push(entry);added.push(entry);
   }
   if(pendingState.items.length > 10){
     pendingState.items.splice(10).forEach(entry=>entry.url && URL.revokeObjectURL(entry.url));
@@ -1075,17 +1303,18 @@ async function stageFiles(files){
   }
   renderPending();
   $("#upload-preview").scrollIntoView({block:"nearest",behavior:"smooth"});
-  await Promise.all(pendingState.items.filter(entry=>!entry.hash && !entry.problem).map(async entry=>{
+  await Promise.all(added.filter(entry=>entry.hashPending && pendingState.items.includes(entry)).map(async entry=>{
     try{entry.hash=await fileSha256(entry.file);}catch{entry.hash="";}
-    const seen=pendingState.items.some(other=>other !== entry && other.hash && other.hash === entry.hash && pendingState.items.indexOf(other) < pendingState.items.indexOf(entry));
-    entry.duplicate=Boolean(entry.hash) && (analyzed.has(entry.hash) || seen);
+    entry.hashPending=false;
   }));
+  refreshPendingDuplicates();
   renderPending();
 }
 function renderPending(){
   const items=pendingState.items;
   if(!items.length){clearPending();return;}
   $("#upload-preview").hidden=false;$("#panel-file").classList.add("has-pending");
+  $("#dropzone h2").textContent="이미지를 더 끌어놓거나 클릭해서 추가하세요";
   const ready=items.filter(entry=>!entry.problem && !entry.duplicate);
   $("#upload-preview-count").textContent=`${ready.length} / ${items.length}장 분석 예정`;
   $("#upload-preview-list").innerHTML=items.map(entry=>{
@@ -1095,10 +1324,11 @@ function renderPending(){
   }).join("");
   const skipped=items.length-ready.length, note=$("#upload-preview-note");
   note.hidden=!skipped;
-  note.textContent=skipped ? `${skipped}장은 분석하지 않습니다. 같은 사진을 다시 분석하지 않아 서버 기록이 중복 저장되지 않습니다.` : "";
+  note.textContent=skipped ? `${skipped}장은 분석하지 않습니다. 중복 확인은 50 MB 이하 파일에 적용됩니다.` : "";
   const start=$("#upload-preview-start");
-  start.disabled=!ready.length || state.busy;
-  start.textContent=ready.length ? `${ready.length}장 분석 시작 →` : "분석할 사진이 없습니다";
+  const checking=items.some(entry=>entry.hashPending);
+  start.disabled=!ready.length || state.busy || checking;
+  start.textContent=checking ? "중복 확인 중…" : ready.length ? `${ready.length}장 분석 시작 →` : "분석할 사진이 없습니다";
   $$("[data-pending-img]").forEach(img=>img.addEventListener("load",()=>{
     const entry=pendingState.items.find(item=>item.id === img.dataset.pendingImg);
     if(entry && !entry.dimensions && img.naturalWidth){entry.dimensions=`${img.naturalWidth}×${img.naturalHeight}`;const small=img.closest("li")?.querySelector("small");if(small)small.textContent=`${sizes(entry.file.size)} · ${entry.dimensions}${entry.file.type ? ` · ${entry.file.type.replace("image/","").toUpperCase()}` : ""}`;}
@@ -1109,9 +1339,9 @@ $("#upload-preview-list").addEventListener("click",event=>{
   const index=pendingState.items.findIndex(entry=>entry.id === button.dataset.pendingRemove);
   if(index < 0)return;
   const [entry]=pendingState.items.splice(index,1);if(entry.url)URL.revokeObjectURL(entry.url);
-  renderPending();
+  refreshPendingDuplicates();renderPending();
 });
-$("#upload-preview-cancel").addEventListener("click",()=>{clearPending();$("#dropzone").focus();});
+$("#upload-preview-cancel").addEventListener("click",()=>{clearPending();if(result())render();else $("#dropzone").focus();});
 $("#upload-preview-add").addEventListener("click",()=>{if(!state.busy)$("#file-input").click();});
 $("#upload-preview-start").addEventListener("click",async()=>{
   const ready=pendingState.items.filter(entry=>!entry.problem && !entry.duplicate).map(entry=>entry.file);

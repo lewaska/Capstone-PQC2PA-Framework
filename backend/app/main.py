@@ -2,6 +2,7 @@ from pathlib import Path
 
 from app.api.routes.ai import router as ai_router
 from app.api.routes.tsa import router as tsa_router
+from app.api.routes.conversions import router as conversions_router, validation_router
 
 from app.api.routes.assets import router as assets_router
 from fastapi import FastAPI
@@ -15,6 +16,8 @@ app = FastAPI(
 app.include_router(ai_router, prefix="/api/v1")
 app.include_router(assets_router, prefix="/api/v1")
 app.include_router(tsa_router, prefix="/api/v1")
+app.include_router(conversions_router, prefix="/api/v1")
+app.include_router(validation_router, prefix="/api/v1")
 
 app.add_middleware(
     CORSMiddleware,

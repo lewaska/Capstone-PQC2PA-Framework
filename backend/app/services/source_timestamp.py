@@ -1,8 +1,8 @@
 """Source Classic Manifest timestamp extraction and policy."""
-# 진짜 존나게 하기 싫네 내가 이걸 왜해야되냐?
 from __future__ import annotations
 
 import base64
+import cbor2
 import hashlib
 import json
 import subprocess
@@ -17,6 +17,7 @@ from app.services.rfc3161 import (
     issue_rfc3161_token,
     verify_rfc3161_token,
 )
+from app.services.pqc_source import decode_cose
 
 SOURCE_TIMESTAMP_ASSERTION_LABEL = (
     "org.pq-c2pa.source-timestamp"
@@ -87,23 +88,16 @@ class SourceTimestampEvidence:
             },
         }
 
-    def classic_timestamp_assertion_definition(self) -> dict[str, Any]:
-        """새로 발급한 RFC 3161 토큰을 Classic Update에 넣는 정의입니다."""
-
-        if self.state is not SourceTimestampState.ISSUED:
-            raise SourceTimestampError(
-                "새로 발급한 timestamp만 Classic Update에 추가할 수 있습니다."
-            )
-        if self.token is None:
-            raise SourceTimestampError("발급된 timestamp token이 없습니다.")
-
-        return {
-            "label": "c2pa.time-stamp",
-            "created": True,
-            "data": {
-                self.manifest_id: list(self.token),
-            },
-        }
+def timestamp_input_from_cose(cose_sign1: bytes) -> bytes:
+    """Reconstruct the C2PA sigTst2 CounterSignature input for verification."""
+    value = cbor2.loads(cose_sign1)
+    if isinstance(value, cbor2.CBORTag):
+        value = value.value
+    protected_raw = value[0]
+    _, _, _, signature = decode_cose(cose_sign1)
+    return cbor2.dumps([
+        "CounterSignature", protected_raw, b"", cbor2.dumps(signature)
+    ])
 
 
 def _decode_base64(value: Any, field_name: str) -> bytes:
@@ -311,11 +305,23 @@ def ensure_source_timestamp(
     if evidence.state is SourceTimestampState.EXISTING:
         return evidence
 
-    issued = issue_rfc3161_token(
-        evidence.signature,
-        hash_algorithm="sha256",
-    )
-    if not verify_rfc3161_token(evidence.signature, issued.token):
+    # sigTst2 timestamps the COSE CounterSignature structure, not the bare
+    # signature bytes. Use the same native encoder as the Classic attach path.
+    with TemporaryDirectory(prefix="pqc2pa-timestamp-input-") as directory:
+        timestamp_input = Path(directory) / "input.bin"
+        result = subprocess.run(
+            [str(settings.pqc2pa_cli_path.resolve()), "timestamp-input",
+             "--input", str(Path(image_path).resolve()),
+             "--output", str(timestamp_input)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=False, timeout=120,
+        )
+        if result.returncode != 0 or not timestamp_input.is_file():
+            raise SourceTimestampError("M0 sigTst2 timestamp input 생성에 실패했습니다.")
+        payload = timestamp_input.read_bytes()
+
+    issued = issue_rfc3161_token(payload, hash_algorithm="sha256")
+    if not verify_rfc3161_token(payload, issued.token):
         raise SourceTimestampError(
             "새 RFC 3161 token이 원본 Classic signature와 일치하지 않습니다."
         )
@@ -325,7 +331,7 @@ def ensure_source_timestamp(
         manifest_id=evidence.manifest_id,
         signature=evidence.signature,
         cose_sign1=evidence.cose_sign1,
-        timestamp_kind="c2pa.time-stamp",
+        timestamp_kind="sigTst2",
         token=issued.token,
         validated=True,
         trusted=True,

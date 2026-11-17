@@ -1,13 +1,14 @@
 """Detached C2PA JUMBF layout with an explicitly experimental PQ profile.
 
 Structure: C2PA 2.3 sections 8, 10, 15 and ingredient v3. Algorithm
-extensions: SHA3-256 hashed URIs/data binding and ML-DSA-65 COSE signing.
+extensions: SHA3-256 hashed URIs/data binding and HAETAE-3 COSE signing.
 Classic evidence remains byte-exact and is validated by the official SDK.
 This is not a claim of C2PA conformance certification.
 """
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import uuid
 from collections.abc import Mapping
@@ -21,7 +22,7 @@ from app.services.pqc_source import (
     PqcSourceError, boxes, cbor_payload, child_map, decode_cose, label_of, manifest_map,
 )
 
-PROFILE = "pq-c2pa-jumbf-1"
+PROFILE = "pq-c2pa-jumbf-haetae3-1"
 ALGORITHM = "sha3-256"
 EVIDENCE = "org.pq-c2pa.source-evidence"
 INGREDIENT = "c2pa.ingredient.v3"
@@ -72,7 +73,7 @@ def local_ref(raw):
     return reference(raw, "self#jumbf=c2pa.assertions/" + label_of(one_box(raw)))
 
 
-def assemble(source, fingerprint_data, hard_binding, sign):
+def assemble(source, fingerprint_data, hard_binding, sign, source_timestamp_data=None):
     """Preserve all M0 history; add a last/active P1 standard manifest box."""
     original = one_box(source.store_raw)
     require_type(original, b"c2pa")
@@ -123,6 +124,8 @@ def assemble(source, fingerprint_data, hard_binding, sign):
     created = [evidence, ingredient, actions,
                assertion("c2pa.soft-binding", fingerprint_data),
                assertion("c2pa.hash.data", hard_binding)]
+    if source_timestamp_data is not None:
+        created.append(assertion("org.pq-c2pa.source-timestamp", source_timestamp_data))
     labels = [label_of(one_box(raw)) for raw in gathered + created]
     if len(set(labels)) != len(labels):
         raise PqcSourceError("Source collides with reserved PQ assertion label")
@@ -313,6 +316,25 @@ def inspect(raw):
                 or exclusion["start"] < 0 or exclusion["length"] <= 0):
             raise PqcSourceError("assertion.dataHash.malformed: exclusion")
     soft, _ = strict_cbor(assertion_boxes["c2pa.soft-binding"])
+    timestamp_box = assertion_boxes.get("org.pq-c2pa.source-timestamp")
+    source_timestamp = strict_cbor(timestamp_box)[0] if timestamp_box else None
+    if source_timestamp is not None:
+        if (not isinstance(source_timestamp, dict)
+                or not isinstance(source_timestamp.get("sourceManifest"), str)
+                or source_timestamp.get("source") not in {"EXISTING", "ISSUED"}
+                or source_timestamp.get("storage") not in {"sigTst", "sigTst2"}
+                or not isinstance(source_timestamp.get("token"), bytes)
+                or not isinstance(source_timestamp.get("targetSignatureHash"), dict)
+                or source_timestamp["targetSignatureHash"].get("alg") != ALGORITHM
+                or not isinstance(source_timestamp["targetSignatureHash"].get("hash"), bytes)
+                or len(source_timestamp["targetSignatureHash"]["hash"]) != 32):
+            raise PqcSourceError("Source timestamp assertion is malformed")
+        if (source_timestamp["source"] == "EXISTING"
+                and (source_timestamp["sourceManifest"] != source_id
+                     or source_timestamp["targetSignatureHash"]["hash"] != hashlib.sha3_256(sig).digest()
+                     or source_timestamp["token"] not in evidence["timestamp_tokens"])):
+            raise PqcSourceError("Source timestamp does not match preserved M0 token")
     return {"claim_raw": claim_raw, "signature_raw": signature_raw,
             "hard_binding": binding, "soft_binding": soft, "evidence": evidence,
+            "source_timestamp": source_timestamp,
             "manifest_id": manifest_id, "source_manifests": original_manifests}

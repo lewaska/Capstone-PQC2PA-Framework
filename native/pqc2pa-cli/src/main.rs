@@ -55,6 +55,16 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+
+    /// 저장된 Classic Manifest Store를 메타데이터가 없는 이미지에 다시 삽입한다.
+    RestoreStore {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -88,6 +98,12 @@ fn main() -> Result<()> {
 
             use std::io::Write;
             file.write_all(&bytes)?;
+        }
+        Command::RestoreStore { input, store, output } => {
+            anyhow::ensure!(input != output, "input and output must differ");
+            anyhow::ensure!(!output.exists(), "output already exists");
+            let bytes = std::fs::read(store)?;
+            c2pa::jumbf_io::save_jumbf_to_file(&bytes, input, Some(output))?;
         }
     }
 

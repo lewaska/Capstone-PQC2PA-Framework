@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import hashlib
+from dataclasses import replace
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,6 +14,11 @@ from cryptography.hazmat.primitives.serialization import Encoding
 
 from app.core.config import settings
 from app.services.classic_preparation import prepare_classic_for_pq
+from app.services.source_timestamp import (
+    SourceTimestampState, ensure_source_timestamp, inspect_source_timestamp,
+    timestamp_input_from_cose,
+)
+from app.services.rfc3161 import verify_rfc3161_token
 from app.services.pqc_source import (
     PqcSourceError,
     current_c2pa_exclusions,
@@ -21,9 +28,11 @@ from app.services.pqc_source import (
 )
 
 from app.services import pqc_manifest
+from app.services import haetae
 
 PROFILE = pqc_manifest.PROFILE
-ML_DSA_65 = -49
+HAETAE_ALGORITHM = "HAETAE-3-P1"
+HAETAE_KEY_HASH_HEADER = -70001
 
 
 class PqcBuildError(RuntimeError):
@@ -53,105 +62,34 @@ def read_certificate(path: Path) -> bytes:
     return cert.public_bytes(Encoding.DER)
 
 
-def _run_openssl(arguments: list[str], password: str | None = None) -> None:
-    process = subprocess.run(
-        [str(settings.openssl_bin), *arguments],
-        input=None if password is None else (password + "\n").encode(),
-        capture_output=True,
-        check=False,
-        timeout=120,
-    )
-    if process.returncode != 0:
-        raise PqcBuildError(
-            "OpenSSL 작업이 실패했습니다. 키·인증서·실행 경로를 확인하십시오."
-        )
-
-
-def check_our_certificate_chain() -> None:
-    leaf = x509.load_der_x509_certificate(read_certificate(settings.mldsa_leaf_certificate_path))
-    try:
-        constraints = leaf.extensions.get_extension_for_class(x509.BasicConstraints).value
-        usage = leaf.extensions.get_extension_for_class(x509.KeyUsage).value
-        eku = leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
-    except x509.ExtensionNotFound as exc:
-        raise PqcBuildError("Signing certificate requires basic constraints, key usage and EKU") from exc
-    if (constraints.ca or not usage.digital_signature or usage.key_cert_sign
-            or leaf.public_key_algorithm_oid.dotted_string != "2.16.840.1.101.3.4.3.18"
-            or not {oid.dotted_string for oid in eku} & {"1.3.6.1.4.1.62558.2.1", "1.3.6.1.5.5.7.3.36"}):
-        raise PqcBuildError("Signing certificate is not an ML-DSA-65 C2PA signing credential")
-    _run_openssl([
-        "verify", "-purpose", "any",
-        "-CAfile", str(settings.mldsa_root_certificate_path),
-        str(settings.mldsa_leaf_certificate_path),
-    ])
-
-
-def sign_with_our_signer(message: bytes) -> bytes:
-    with TemporaryDirectory(prefix="pqc-sign-") as directory:
-        root = Path(directory)
-        message_path, signature_path = root / "message.bin", root / "signature.bin"
-        message_path.write_bytes(message)
-        arguments = [
-            "pkeyutl", "-sign",
-            "-inkey", str(settings.mldsa_private_key_path),
-            "-in", str(message_path),
-            "-out", str(signature_path),
-        ]
-        password = None
-        if settings.mldsa_private_key_passphrase is not None:
-            password = settings.mldsa_private_key_passphrase.get_secret_value()
-            arguments.extend(["-passin", "stdin"])
-        _run_openssl(arguments, password)
-        signature = signature_path.read_bytes()
-        if len(signature) != 3309:
-            raise PqcBuildError("ML-DSA-65 서명 길이가 아닙니다.")
-        return signature
-
-
-def verify_with_our_signer(message: bytes, signature: bytes) -> None:
-    with TemporaryDirectory(prefix="pqc-verify-") as directory:
-        root = Path(directory)
-        message_path, signature_path = root / "message.bin", root / "signature.bin"
-        message_path.write_bytes(message)
-        signature_path.write_bytes(signature)
-        _run_openssl([
-            "pkeyutl", "-verify", "-certin",
-            "-inkey", str(settings.mldsa_leaf_certificate_path),
-            "-in", str(message_path),
-            "-sigfile", str(signature_path),
-        ])
-
-
 def make_cose_signature(claim_raw: bytes) -> bytes:
-    check_our_certificate_chain()
-    chain = [
-        read_certificate(settings.mldsa_leaf_certificate_path),
-        read_certificate(settings.mldsa_root_certificate_path),
-    ]
-    protected_raw = encode({1: ML_DSA_65, 33: chain})
+    protected_raw = encode({1: HAETAE_ALGORITHM,
+                            HAETAE_KEY_HASH_HEADER: hashlib.sha256(haetae.public_key()).digest()})
     signature_input = encode(["Signature1", protected_raw, b"", claim_raw])
-    signature = sign_with_our_signer(signature_input)
-    verify_with_our_signer(signature_input, signature)
+    signature = haetae.sign(signature_input)
+    if not haetae.verify(signature_input, signature):
+        raise PqcBuildError("HAETAE-3 signature self-check failed")
     return encode(cbor2.CBORTag(18, [protected_raw, {}, None, signature]))
 
 
 def verify_p1(p1_bytes: bytes, image: Path) -> dict:
     try:
         parsed = pqc_manifest.inspect(p1_bytes)
+        source_timestamp = parsed["source_timestamp"]
         claim_raw = parsed["claim_raw"]
         cose = decode_p1_cbor(parsed["signature_raw"])
         if not isinstance(cose, cbor2.CBORTag) or cose.tag != 18:
             raise PqcBuildError("P1 signature must be COSE_Sign1")
         protected_raw, unprotected, payload, signature = cose.value
-        if unprotected or payload is not None or not isinstance(signature, bytes) or len(signature) != 3309:
-            raise PqcBuildError("Invalid detached ML-DSA-65 COSE structure")
+        if unprotected or payload is not None or not isinstance(signature, bytes) or len(signature) != haetae.SIGNATURE_BYTES:
+            raise PqcBuildError("Invalid detached HAETAE-3 COSE structure")
         protected = decode_p1_cbor(protected_raw)
-        expected_chain = [read_certificate(settings.mldsa_leaf_certificate_path),
-                          read_certificate(settings.mldsa_root_certificate_path)]
-        if not isinstance(protected, dict) or set(protected) != {1, 33} or protected.get(1) != ML_DSA_65 or protected.get(33) != expected_chain:
-            raise PqcBuildError("Unexpected ML-DSA signer/algorithm")
-        check_our_certificate_chain()
-        verify_with_our_signer(encode(["Signature1", protected_raw, b"", claim_raw]), signature)
+        expected = {1: HAETAE_ALGORITHM,
+                    HAETAE_KEY_HASH_HEADER: hashlib.sha256(haetae.public_key()).digest()}
+        if protected != expected:
+            raise PqcBuildError("Unexpected HAETAE signer/algorithm")
+        if not haetae.verify(encode(["Signature1", protected_raw, b"", claim_raw]), signature):
+            raise PqcBuildError("HAETAE-3 claim signature invalid")
         binding = parsed["hard_binding"]
         if not isinstance(binding, dict) or binding.get("alg") != "sha3-256":
             raise PqcBuildError("Invalid SHA3 hard binding")
@@ -160,6 +98,19 @@ def verify_p1(p1_bytes: bytes, image: Path) -> dict:
         if binding.get("exclusions") != exclusions or binding.get("hash") != hash_excluding(asset, exclusions, "sha3-256"):
             raise PqcBuildError("assertion.dataHash.mismatch")
         classic = extract_source(image)  # Official SDK validates the actual asset.
+        if source_timestamp is None:
+            if parsed["evidence"]["timestamp_tokens"] or classic.timestamps:
+                raise PqcBuildError("P1 omitted an available Classic timestamp")
+        elif source_timestamp["source"] == "ISSUED":
+            if (source_timestamp["sourceManifest"] != classic.manifest_id
+                    or source_timestamp["storage"] != "sigTst2"
+                    or source_timestamp["targetSignatureHash"]["hash"]
+                    != hashlib.sha3_256(classic.signature_raw).digest()
+                    or source_timestamp["token"] not in classic.timestamps):
+                raise PqcBuildError("P1 timestamp does not match M1 sigTst2")
+            payload = timestamp_input_from_cose(classic.cose_raw)
+            if not verify_rfc3161_token(payload, source_timestamp["token"]):
+                raise PqcBuildError("M1 sigTst2 token is invalid")
         from app.services.pqc_source import manifest_map
         current = manifest_map(classic.store_raw)
         for name, box in parsed["source_manifests"].items():
@@ -196,7 +147,11 @@ def verify_p1(p1_bytes: bytes, image: Path) -> dict:
             "assertion_hashes": "VALID", "ingredient_references": "VALID",
             "source_evidence": "VALID", "classic_validation": "SDK_VALIDATED",
             "claim_signature": "VALID", "hard_binding": "VALID", "soft_binding": "VALID",
-            "signer": "FRAMEWORK_PINNED_SIGNER", "timestamp": "NOT_ISSUED_FOR_P1",
+            "signature_algorithm": "HAETAE-3",
+            "signer": "FRAMEWORK_PINNED_SIGNER",
+            "timestamp": ("NOT_AVAILABLE" if source_timestamp is None else
+                          "M1_SIGTST2_ISSUED" if source_timestamp["source"] == "ISSUED"
+                          else "M0_TOKEN_EXISTING"),
             "revocation": "NOT_CHECKED", "conformance": "EXPERIMENTAL_PQ_PROFILE",
         }
     except (KeyError, TypeError, ValueError, IndexError, PqcSourceError, cbor2.CBORDecodeError) as exc:
@@ -212,13 +167,67 @@ def build_p1(source_image: Path, classic_output: Path, p1_output: Path) -> dict:
     if classic_output.exists() or p1_output.exists():
         raise PqcBuildError("기존 출력 파일을 덮어쓰지 않습니다.")
     source = extract_source(source_image)
+    source_timestamp = inspect_source_timestamp(source_image)
+    tsa_ready = (
+        settings.tsa_private_key_path.is_file()
+        and settings.tsa_certificate_path.is_file()
+        and settings.tsa_config_path.is_file()
+        and settings.tsa_private_key_passphrase is not None
+        and bool(settings.tsa_private_key_passphrase.get_secret_value())
+    )
+    request_timestamp = source_timestamp.state is SourceTimestampState.MISSING and tsa_ready
     with TemporaryDirectory(prefix="pqc-build-") as directory:
         working_image = Path(directory) / ("classic" + source_image.suffix.lower())
-        prepared = prepare_classic_for_pq(source_image, working_image)
+        prepared = prepare_classic_for_pq(
+            source_image, working_image,
+            timestamp_authority_url=(settings.classic_tsa_url
+                                     if request_timestamp
+                                     else None),
+        )
+        if request_timestamp:
+            if prepared.mode == "REUSE_EXISTING":
+                # An existing soft binding does not require an M1. Timestamp
+                # the already signed M0 through its COSE unprotected header.
+                issued = ensure_source_timestamp(working_image)
+                token_path = Path(directory) / "source.tsr"
+                stamped_image = Path(directory) / ("timestamped" + source_image.suffix.lower())
+                token_path.write_bytes(issued.token)
+                attached = subprocess.run(
+                    [str(settings.pqc2pa_cli_path.resolve()), "attach-timestamp",
+                     "--input", str(working_image), "--output", str(stamped_image),
+                     "--token", str(token_path)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    check=False, timeout=120,
+                )
+                if attached.returncode != 0 or not stamped_image.is_file():
+                    raise PqcBuildError(
+                        "M0 sigTst2 삽입에 실패했습니다. 기존 서명의 예약 공간을 확인하십시오."
+                    )
+                attached_evidence = inspect_source_timestamp(stamped_image)
+                if (attached_evidence.state is not SourceTimestampState.EXISTING
+                        or attached_evidence.timestamp_kind != "sigTst2"
+                        or attached_evidence.token != issued.token
+                        or attached_evidence.signature != source.signature_raw):
+                    raise PqcBuildError("M0 sigTst2 삽입 후 서명 또는 토큰이 일치하지 않습니다.")
+                # P1 must preserve the *timestamped* M0 bytes, not the input.
+                source = extract_source(stamped_image)
+                stamped_image.replace(working_image)
+                source_timestamp = replace(attached_evidence, state=SourceTimestampState.ISSUED)
+            else:
+                issued = inspect_source_timestamp(working_image)
+                if issued.state is not SourceTimestampState.EXISTING or issued.timestamp_kind != "sigTst2":
+                    raise PqcBuildError("M1 signer did not produce a valid sigTst2")
+                source_timestamp = replace(issued, state=SourceTimestampState.ISSUED)
         fingerprint_data = prepared.fingerprint.assertion_definition()["data"]
         fingerprint_data["blocks"][0]["value"] = prepared.fingerprint.value
+        timestamp_data = None
+        if source_timestamp.state is not SourceTimestampState.MISSING:
+            timestamp_data = source_timestamp.assertion_definition()["data"]
+            timestamp_data["token"] = source_timestamp.token
+            timestamp_data["targetSignatureHash"]["hash"] = source_timestamp.signature_sha3_256
         p1_bytes = pqc_manifest.assemble(
             source, fingerprint_data, make_hard_binding(working_image), make_cose_signature,
+            timestamp_data,
         )
         validation = verify_p1(p1_bytes, working_image)
         classic_output.parent.mkdir(parents=True, exist_ok=True)

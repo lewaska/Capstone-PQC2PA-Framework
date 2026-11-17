@@ -3,8 +3,8 @@
 //  - submission: 국립과학수사연구원 감정서 서식 규정 별지 제10호서식(디지털 감정서)
 //                검증물·검증사항 → 1. 방법 2. 고찰 3. 결과 4. 비고 → 기관·일자·서명,
 //                공문서 항목 기호(1. 가. 1))·붙임·"끝." 표시, 쪽 번호 "- n -"
-//  - technical:  KS Q ISO/IEC 17025 7.8 시험성적서 형식. 첫 장에 의뢰자·대상·방법·환경·결과표,
-//                결과와 구분한 의견·해석(7.8.7), 작성자·기술책임자 확인란, "페이지 (n) / (총 N)",
+//  - technical:  KS Q ISO/IEC 17025 7.8 시험성적서 형식. 첫 장에 대상·검사 시각·방법·환경·결과표,
+//                결과와 구분한 의견·해석(7.8.7), 신청인 정보 없이, "페이지 (n) / (총 N)",
 //                이후 별첨에 상세 결과
 //  - summary:    한 장짜리 결과 요약
 // Monochrome, ruled tables (thick top/bottom, thin inner, open sides), 개조식 문장.
@@ -21,9 +21,9 @@ const C = {ink:"#000000", text:"#1a1a1a", muted:"#4a4a4a", faint:"#777777", thin
 
 const TYPES = {
   summary: {code:"SUM", title:"C2PA 출처 확인 결과 요약서", kind:"일반인용", page:"simple"},
-  submission: {code:"SUB", title:"디지털 콘텐츠 출처 검증서", kind:"경찰서 제출용", page:"gov"},
+  submission: {code:"SUB", title:"이미지 출처 검증 참고자료", kind:"경찰서 제출용", page:"gov"},
   pq: {code:"PQV", title:"PQ 변환본 출처 검증 종합 보고서", kind:"PQ 변환본", page:"kolas"},
-  technical: {code:"TEC", title:"C2PA 출처·무결성 분석서", kind:"상세분석", page:"kolas"},
+  technical: {code:"TEC", title:"PQ-C2PA 출처·무결성 분석서", kind:"상세분석", page:"kolas"},
 };
 
 const STATES = {
@@ -120,7 +120,7 @@ const OPINION_SCALE = [
 ];
 const REFERENCES = [
   ["국립과학수사연구원, 「국립과학수사연구원 감정서 서식 규정」(예규 제591호, 2026. 7. 1. 시행) 별지 제10호서식 디지털 감정서", "https://www.law.go.kr/행정규칙/국립과학수사연구원감정서서식규정"],
-  ["경찰청, 「디지털 증거의 처리 등에 관한 규칙」(경찰청훈령 제1178호, 2026. 1. 25. 시행) 제30조 결과보고서", "https://www.law.go.kr/admRulLsInfoP.do?admRulId=48364&efYd=0"],
+  ["경찰청, 「디지털 증거의 처리 등에 관한 규칙」(경찰청훈령 제1178호, 2026. 1. 25. 시행) 제37조 결과보고서", "https://www.law.go.kr/admRulLsInfoP.do?admRulId=48364&efYd=0"],
   ["KS Q ISO/IEC 17025:2017, 시험기관 및 교정기관의 자격에 대한 일반 요구사항 — 7.8 결과 보고", "https://www.iso.org/standard/66912.html"],
   ["ISO 21043-5:2025, Forensic sciences — Part 5: Reporting", "https://www.iso.org/standard/73896.html"],
   ["SWGDE 18-Q-002, Requirements for Report Writing in Digital and Multimedia Forensics", "https://www.swgde.org/documents/published-complete-listing/18-q-002-swgde-requirements-for-report-writing-in-digital-and-multimedia-forensics/"],
@@ -145,7 +145,7 @@ function stamp(value) {
   const d = toDate(value);
   if (!d) return "정보 없음";
   const offset = -d.getTimezoneOffset(), sign = offset >= 0 ? "+" : "-", abs = Math.abs(offset);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} (UTC${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)})`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,"0")} (UTC${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)})`;
 }
 const dotDate = value => { const d = toDate(value); return d ? `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.` : ""; };
 const longDate = value => { const d = toDate(value); return d ? `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일` : ""; };
@@ -162,17 +162,17 @@ const softwareName = item => (item.software || activeManifest(item).claim_genera
 const checksOf = item => (item.checks || []).filter(c => ["success", "informational", "failure"].includes(c.kind));
 const SCOPE_KO = {activeManifest:"활성 Manifest", ingredientDeltas:"재료 Manifest", validationDeltas:"재료 Manifest", legacy:"기존 형식"};
 const kindKo = kind => ({success:"통과", informational:"참고", failure:"실패"}[kind] || kind);
-const trustKo = item => item.trust_profile === "lab" ? "프로젝트 자체 CA를 Trust Anchor로 등록한 신뢰 기준" : "공식 C2PA SDK 기본 신뢰 설정";
-const modeKo = item => item.processing_mode === "browser" ? "브라우저 내부 검증(공식 C2PA 웹 SDK, 파일 서버 미전송)" : "로컬 서버 검증(공식 C2PA SDK)";
+const trustKo = item => item.trust_profile === "lab" ? "자체 CA를 Trust Anchor로 등록한 신뢰 기준" : "공식 C2PA SDK 기본 신뢰 설정";
+const modeKo = item => item.processing_mode === "browser" ? "브라우저 내부 검증(공식 C2PA 웹 SDK, 파일 서버 미전송)" : "사이트 서버 검증(공식 C2PA SDK)";
 const engineKo = (item, env) => item.processing_mode === "browser" ? "@contentauth/c2pa-web (WASM)" : env?.sdk ? `${env.sdk} ${env.sdk_version || ""}`.trim() : "c2pa-python";
 const specVersion = item => item.store?.validation_results?.specVersion || "";
 const dimsOf = item => item.dimensions || (item.image_info?.width && item.image_info?.height ? [item.image_info.width, item.image_info.height] : null);
 const fileLine = item => [filled(item.mime), bytes(item.size), dimsOf(item) ? `${dimsOf(item)[0]} × ${dimsOf(item)[1]} px` : ""].filter(Boolean).join(", ");
 const uniq = list => [...new Set(list)];
-function period(start, end) {
-  const a = stamp(start), b = stamp(end);
-  if (a === "정보 없음" || b === "정보 없음") return `검증 ${a}, 발급 ${b}`;
-  return a.slice(0, 10) === b.slice(0, 10) ? `${a.slice(0, 19)} 검증, ${b.slice(11, 19)} 발급 ${a.slice(20)}` : `${a.slice(0, 19)} 검증, ${b.slice(0, 19)} 발급 ${b.slice(20)}`;
+function inspectionPeriod(item){
+  const timing=item.verification_timing;
+  if(timing?.started_at && timing?.completed_at)return `${stamp(timing.started_at)} 시작\n${stamp(timing.completed_at)} 종료 (서버 C2PA 검사)`;
+  return `${stamp(item.created_at)} (기록된 검사 시각 · 시작/종료 상세 없음)`;
 }
 const codeList = list => uniq(list.map(c => c.code)).join(", ");
 const spaced = name => /^[가-힣]{2,4}$/.test(name || "") ? name.split("").join(" ") : (name || "");
@@ -199,8 +199,26 @@ function recordSnapshot(item) {
   return rest;
 }
 
+function hasAiRecord(item) {
+  return item.ai_origin ? ["created", "inherited", "edited", "media"].includes(item.ai_origin.kind) : item.ai === "declared";
+}
+function aiReportLabel(item) {
+  return item.ai_origin?.label || (item.ai === "declared" ? "AI 사용 선언 있음" : "확인 가능한 선언 없음");
+}
+function aiReportDescription(item) {
+  if (!hasAiRecord(item)) return "확인 가능한 선언 없음";
+  const tool=item.ai_origin?.tool ? ` · 기록된 도구: ${item.ai_origin.tool}` : "";
+  return `${aiReportLabel(item)}${tool} (출처 기록의 선언이며 AI 탐지 결과 아님)`;
+}
+
 function pqEvidence(item) {
-  if (item.pq_evidence && item.pq_evidence.status) return item.pq_evidence;
+  if(item.conversion_v4){const result=item.conversion_v4.result||{},p=result.p1_validation||{};
+    const checks=['assertion_hashes','ingredient_references','source_evidence','claim_signature','hard_binding','soft_binding'];
+    const valid=item.conversion_v4.status==='COMPLETED' && result.trust_status==='TRUSTED' && p.profile==='pq-c2pa-jumbf-haetae3-1' && p.container==='JUMBF' && checks.every(key=>p[key]==='VALID') && p.classic_validation==='SDK_VALIDATED' && p.signer==='FRAMEWORK_PINNED_SIGNER' && p.conformance==='EXPERIMENTAL_PQ_PROFILE';
+    return {present:true,detached:true,status:valid?'VALID':checks.some(key=>p[key]==='INVALID')?'INVALID':'UNVERIFIED',schema:p.profile,signature_algorithm:p.signature_algorithm,reason:"V4 변환 응답의 분리 저장 P1 검증 결과"};
+  }
+  if(item.pqc_process)return {present:false,status:'UNVERIFIED',reason:item.pqc_process.message||'PQC 처리를 완료하지 못함'};
+  if (item.pq_evidence && item.pq_evidence.status && !(item.pq_evidence.status === "NOT_PRESENT" && ["Error", "RemoteUnavailable", "Unknown"].includes(item.state))) return item.pq_evidence;
   for (const assertion of activeManifest(item).assertions || []) {
     if (String(assertion.label || "").startsWith("org.pq-c2pa.p1")) {
       const data = assertion.data || {}, payload = data.payload || {};
@@ -210,9 +228,9 @@ function pqEvidence(item) {
         reason:item.processing_mode === "browser" ? "브라우저 검증에서는 P1 ML-DSA-65 서명을 검사하지 않음. 서버 검증으로 다시 확인 필요." : "P1 서명 검사 결과가 기록에 없음."};
     }
   }
-  return {present:false, status:"NOT_PRESENT"};
+  return ["Error", "RemoteUnavailable", "Unknown"].includes(item.state) || item.processing_mode === "browser" ? {present:false, status:"UNVERIFIED", reason:"증거 유무를 확인하지 못함"} : {present:false, status:"NOT_PRESENT"};
 }
-const PQ_STATUS = {VALID:"유효", INVALID:"검증 실패", UNVERIFIED:"검사하지 못함", NOT_PRESENT:"없음"};
+const PQ_STATUS = {VALID:"유효", INVALID:"검증 실패", UNVERIFIED:"검사하지 못함", NOT_PRESENT:"DB 미조회"};
 
 // Status codes grouped by what they say about the active manifest.
 function facts(item) {
@@ -242,54 +260,34 @@ function facts(item) {
 
 // Opinion on two competing propositions (SWGDE 18-I-001; no numerical probability).
 function opinion(item, f = facts(item)) {
-  const recordBad = [...f.sigBad, ...f.hashBad, ...f.ingredient.filter(c => c.kind === "failure")];
-  if (item.state === "NoManifest") return {level:"판단 불가", statement:"검증할 C2PA 기록이 없어 두 명제를 평가할 수 없음. 기록이 없다는 사실은 변조의 근거가 되지 않음.", basis:["C2PA Manifest가 확인되지 않음"]};
-  if (["RemoteUnavailable", "Error", "Unknown"].includes(item.state) || !STATES[item.state]) return {level:"판단 유보", statement:"검증을 완료하지 못하여 두 명제를 구분할 수 없음.", basis:[stateOf(item).line]};
-  if (f.bindBad.length) {
-    const basis = [`파일 데이터 해시가 서명 당시와 다름(${codeList(f.bindBad)})`];
-    if (f.sigOk) basis.push("클레임 서명은 유효하므로 기록이 아닌 파일 데이터가 서명 이후 바뀐 것으로 해석됨");
-    return {level:"H2를 강하게 지지", statement:"검증물은 C2PA 서명 이후 파일 데이터가 변경된 것으로 판단됨. 변경 내용은 해시 비교만으로 특정할 수 없음.", basis};
-  }
-  if (recordBad.length) return {level:"H2를 강하게 지지", statement:"C2PA 출처 기록이 서명 이후 변경되었거나 손상된 것으로 판단됨.", basis:[`서명된 기록과 실제 기록이 일치하지 않음(${codeList(recordBad)})`]};
-  const credentialOnly = f.failures.every(c => /^(signingCredential|timeStamp)\./.test(String(c.code || "")));
-  if (f.sigOk && f.bindOk.length && credentialOnly) {
-    const basis = ["클레임 서명이 유효함(claimSignature.validated)", `파일 데이터 해시가 서명 당시와 일치함(${codeList(f.bindOk)})`];
-    if (item.state === "Trusted" && !f.failures.length) {
-      basis.push("서명 인증서가 선택한 신뢰 기준에 연결됨(signingCredential.trusted)");
-      return {level:"H1을 강하게 지지", statement:"검증물과 C2PA 기록은 서명 이후 변경되지 않았으며, 선택한 신뢰 기준의 서명자가 기록한 것으로 판단됨.", basis};
-    }
-    basis.push(`서명자 또는 타임스탬프 기관의 신뢰는 확인되지 않음${f.failures.length ? `(${codeList(f.failures)})` : ""}`);
-    return {level:"H1을 지지", statement:"서명 이후 검증물과 기록은 변경되지 않은 것으로 보이나, 서명자의 신뢰는 확인되지 않음.", basis};
-  }
-  return {level:"판단 유보", statement:"보고된 검사 결과만으로는 두 명제를 구분할 수 없음.", basis:f.failures.length ? [`실패 항목: ${codeList(f.failures)}`] : ["핵심 검사(서명·데이터 해시) 결과가 충분하지 않음"]};
+  const failures=[...f.bindBad,...f.sigBad,...f.hashBad];
+  if (failures.length) return {level:"검사 항목 확인 필요", statement:"검사에서 실패 또는 접근할 수 없는 항목이 보고됨. 원본 상태 코드를 확인해야 함.", basis:[codeList(failures)]};
+  if (f.sigOk && f.bindOk.length) return {level:"서명·파일 결합 검사 통과", statement:"보고된 서명 및 파일 결합 검사가 통과함. 서명자 신뢰는 별도 항목임.", basis:["서명 및 파일 결합 검사 결과"]};
+  return {level:"판단 불가", statement:"검사 결과가 충분하지 않아 서명과 파일 결합을 판단할 수 없음.", basis:[stateOf(item).line]};
 }
+function changeConclusion(item, f, op) { return op.statement; }
 
-function changeConclusion(item, f, op) {
-  if (item.state === "NoManifest") return "C2PA 기록이 없어 판단할 수 없음.";
-  if (op.level === "H2를 강하게 지지") return op.statement;
-  if (f.sigOk && f.bindOk.length) return "C2PA 서명 이후 검증물과 출처 기록은 변경되지 않은 것으로 판단됨.";
-  return "검증을 완료하지 못하여 판단할 수 없음.";
-}
 function trustConclusion(item, f) {
   const who = filled(item.signature?.common_name, "서명자");
   if (item.state === "NoManifest") return "C2PA 기록이 없어 해당 없음.";
   if (f.credBad.length) return `서명 인증서에 문제가 보고되어 서명자를 신뢰할 수 없음(${codeList(f.credBad)}).`;
-  if (f.trusted) return `서명자 '${who}'은(는) 선택한 신뢰 기준에서 확인됨${item.trust_profile === "lab" ? "(프로젝트 CA Trust Anchor 기준)" : ""}.`;
+  if (f.trusted) return `서명자 '${who}'은(는) 선택한 신뢰 기준에서 확인됨${item.trust_profile === "lab" ? "(자체 CA Trust Anchor 기준)" : ""}.`;
   if (f.untrusted) return `서명자 '${who}'은(는) 선택한 신뢰 기준에서 확인되지 않음. 서명 자체의 유효성과 별개로 서명자를 신뢰할 근거는 확인되지 않음.`;
   return "서명자 신뢰 여부를 판단할 수 없음.";
 }
 function pqConclusion(pq) {
-  if (pq.status === "VALID") return `P1 증거의 ML-DSA-65 서명은 유효함${pq.m0_active_manifest ? `. 연결된 원본 Manifest는 ${pq.m0_active_manifest}임` : ""}.`;
+  if(pq.detached)return `V4 서버가 반환한 DB 분리 저장 P1의 검사 상태는 ‘${PQ_STATUS[pq.status]||pq.status}’임. 이미지 내 P1의 검사 결과가 아니며 서버에 고정된 HAETAE 공개키 기준의 실험 프로파일임.`;
+  if (pq.status === "VALID") return `이미지 내 기존 형식 P1의 ML-DSA-65 서명은 유효함${pq.m0_active_manifest ? `. 기록된 원본 Manifest는 ${pq.m0_active_manifest}임` : ""}. 외부 DB의 P1은 조회하지 않음.`;
   if (pq.status === "INVALID") return `P1 증거의 서명 검사에 실패함. ${terse(pq.reason || "")}`.trim();
   if (pq.status === "UNVERIFIED") return `P1 증거의 서명을 검사하지 못함. ${terse(pq.reason || "")}`.trim();
-  return "P1 증거가 없음.";
+  return "이미지 내 P1은 확인되지 않음. 외부 DB의 P1은 조회하지 않아 존재 여부와 서명 상태를 판단할 수 없음.";
 }
 
 function notes(item, f) {
   const out = [];
-  if (item.trust_profile === "lab" && manifestCount(item)) out.push("신뢰 판정은 프로젝트 자체 CA를 Trust Anchor로 등록한 기준으로 수행했으며, 서명자 인증서가 이 Trust Anchor까지 연결됨을 확인함.");
+  if (item.trust_profile === "lab") out.push("자체 CA를 포함한 신뢰 기준을 선택함. 실제 신뢰 판정은 검사 결과를 참조함.");
   if (manifestCount(item) && (f.ocsp.some(c => c.code === "signingCredential.ocsp.skipped") || item.network_policy?.ocsp === false)) out.push("인증서 폐지 여부(OCSP)를 조회하지 않았으며, 이를 ‘폐지되지 않음’으로 해석하지 않음.");
-  if (item.ai === "declared") out.push("생성형 AI 사용 선언은 서명자가 기록한 내용으로, 독립적인 딥페이크·AI 탐지 결과가 아님.");
+  if (hasAiRecord(item)) out.push("현재 또는 연결된 이전 출처 기록의 AI 사용 선언은 기록자의 진술이며, 독립적인 딥페이크·AI 탐지 결과가 아님.");
   if (item.state === "NoManifest") out.push("유통 과정에서 메타데이터가 제거되는 경우가 많으므로, C2PA 기록이 없다는 사실은 조작의 근거가 되지 않음.");
   if (item.error) out.push(`분석 오류 메시지: ${safe(item.error, 300)}`);
   out.push("본 검증은 C2PA 출처 기록의 서명·결합 상태를 확인한 것으로, 검증물에 담긴 내용의 사실 여부, 제작자의 실제 신원, 권리관계를 판단하지 않음.");
@@ -303,7 +301,7 @@ function limitations() {
     "신뢰 판정은 사용한 신뢰 기준과 검증 시각에 따라 달라질 수 있음. 인증서 만료·폐지 또는 신뢰 목록 갱신 이후에는 같은 파일도 결과가 달라질 수 있음.",
     "C2PA 기록이 없는 파일은 이 방법으로 평가할 수 없으며, 기록 부재는 변조의 근거가 아님.",
     "AI 생성 선언이 없다는 사실이 AI를 사용하지 않았다는 뜻은 아님.",
-    "ECDSA·RSA 서명은 양자컴퓨터에 취약한 계열로, NIST IR 8547에 따라 2030년 이후 사용 자제(deprecated), 2035년 이후 사용 금지(disallowed) 대상임.",
+    "ECDSA·RSA 서명은 충분한 성능의 양자컴퓨터가 등장하면 취약해질 수 있음. 전환 일정은 적용 환경과 기준에 따라 확인해야 함.",
     "본 문서는 연구용 도구가 자동 생성한 것으로, 수사기관 공식 서식, 공인 감정서 또는 KOLAS 인정 시험성적서가 아님.",
   ];
 }
@@ -323,7 +321,8 @@ function identityOf(options) {
 function requesterText(options) {
   const phone = identityOf(options).phone;
   const name = `${declared(options.applicant)}${phone ? `, 휴대폰 인증 ${phone.phone_masked}` : ""}`;
-  return typed(options.submitTo) ? `${name}\n제출처 ${declared(options.submitTo)}` : name;
+  const contact = typed(options.contactPhone) ? `\n연락처 ${declared(options.contactPhone)}` : "";
+  return `${name}${contact}`;
 }
 const caseText = () => "";
 const orgName = () => "";
@@ -338,13 +337,13 @@ function isoParts(iso) {
 }
 function identityRemarks(options) {
   const {phone} = identityOf(options), signed = options.issuance?.signature?.status === "SIGNED";
-  if (phone) return [`신청인의 휴대폰 번호(${phone.phone_masked})는 ${isoParts(phone.verified_at)?.short || phone.verified_at}에 문자 인증번호로 확인되었으며, 이 신청인이 본 보고서를 발급했다는 기록이 서버 발급 기록${signed ? "(ML-DSA-65 서명)" : ""}에 남음. 신청인 이름은 기재 사항임.`];
-  return ["신청인의 신원은 시스템이 확인하지 않았으며, 신청인의 자필 서명으로 확인함."];
+  if (phone) return [`신청인의 휴대폰 번호(${phone.phone_masked})는 ${isoParts(phone.verified_at)?.short || phone.verified_at}에 문자 인증번호로 확인되었으며, 번호 수신 확인 기록이 서버 발급 기록${signed ? "(ML-DSA-65 서명)" : ""}에 남음. 신청인 이름은 기재 사항임.`];
+  return ["신청인의 신원과 자필 서명은 시스템이 확인하지 않음."];
 }
 function issuanceRemark(meta) {
   if (!meta.issuance) return `이 문서는 발급 서버에 등록되지 않았음${meta.offlineReason ? `(${meta.offlineReason})` : ""}. 문서번호와 발급 시각은 작성자 PC에서 생성됨.`;
   const signed = meta.issuance.signature?.status === "SIGNED";
-  return `이 문서는 발급 서버에 등록되었으며(확인번호 ${meta.issuance.verification_code}), 발급 기록은 ${signed ? "ML-DSA-65로 서명됨" : "서명되지 않았음(서버 ML-DSA 미지원)"}. 발급 당시 PDF의 SHA-256이 발급 서버에 등록됨.`;
+  return `이 문서는 발급 서버에 등록되었으며(확인번호 ${meta.issuance.verification_code}), 발급 기록은 ${signed ? "ML-DSA-65로 서명됨" : "서명되지 않았음(서버 ML-DSA 미지원)"}. 완성된 PDF의 등록 성공 여부는 별도로 확인해야 함.`;
 }
 function issuanceRows(meta, options) {
   const s = meta.issuance, {phone} = identityOf(options);
@@ -352,12 +351,11 @@ function issuanceRows(meta, options) {
     ["문서번호", `${s.doc_no}    확인번호  ${s.verification_code}`],
     ["발급 시각", `${meta.issuedText}, 발급 서버 시각`],
     ["발급 기록 서명", s.signature?.status === "SIGNED" ? `ML-DSA-65 (FIPS 204), 서버 공개키 SHA-256 ${String(s.signature.public_key_sha256).slice(0, 16)}…` : "서명하지 않음(발급 서버 OpenSSL이 ML-DSA-65 미지원)"],
-    ["신청인 확인", phone ? `휴대폰 문자 인증 ${phone.phone_masked} (${isoParts(phone.verified_at)?.short || ""}), 발급 기록에 남김` : "확인하지 않음(신청인 자필 서명으로 확인)"],
   ];
 }
 function drawIssuance(r, meta, options, {compact = false} = {}) {
   if (meta.issuance) r.issueBox(null, "발급 확인", issuanceRows(meta, options), {compact});
-  else r.issueBox(null, "발급 확인 · 미등록", [["상태", `발급 서버에 등록하지 못함${meta.offlineReason ? `(${meta.offlineReason})` : ""}`],
+  else r.issueBox(null, "발급 확인 · 미등록", [["상태", meta.offlineReason === "작성자가 등록하지 않음" ? "발급 서버 등록을 선택하지 않음" : `발급 서버에 등록하지 못함${meta.offlineReason ? `(${meta.offlineReason})` : ""}`],
     ["발급 시각", meta.issuedText], ["비고", "서버에 연결된 상태에서 다시 발급하면 문서번호·발급 시각을 서버가 부여함"]]);
 }
 
@@ -721,7 +719,7 @@ function environmentRows(item, env) {
   rows.push(["신뢰 기준", trustKo(item)]);
   if (results.trustListUri) rows.push(["신뢰 앵커", results.trustListUri === "user_anchors" ? "사용자 지정 신뢰 앵커(user_anchors)" : results.trustListUri]);
   rows.push(["네트워크 정책", `원격 Manifest 조회 ${item.network_policy?.remote_manifests ? "허용" : "차단"}, OCSP 조회 ${item.network_policy?.ocsp ? "수행" : "하지 않음"}`]);
-  rows.push(["P1 서명 검사", item.pq_evidence?.verifier || env?.pq_evidence_verifier || (item.processing_mode === "browser" ? "브라우저 검증에서는 사용하지 않음" : "OpenSSL 3.5 이상 필요(이 서버에서 확인되지 않음)")]);
+  rows.push(["P1 서명 검사", item.conversion_v4 ? "V4 서버가 반환한 분리 저장 P1 검사 상태 확인" : item.pqc_process ? "V4 통합 처리 결과: " + (item.pqc_process.message || "PQC 검사 미완료") : item.pq_evidence?.verifier || env?.pq_evidence_verifier || (item.processing_mode === "browser" ? "브라우저 검증에서는 사용하지 않음" : "OpenSSL 3.5 이상 필요(이 서버에서 확인되지 않음)")]);
   return rows;
 }
 function signatureRows(item) {
@@ -736,12 +734,19 @@ function signatureRows(item) {
   ];
 }
 function historyRows(item, meta) {
-  return [
-    [stamp(item.created_at), `파일 접수 및 해시 계산(${item.processing_mode === "browser" ? "브라우저 내부 처리" : "로컬 서버 처리"})`],
-    [stamp(item.created_at), `C2PA 검증 수행${Number.isFinite(item.elapsed_ms) ? `(소요 ${item.elapsed_ms.toLocaleString("ko-KR")} ms)` : ""}`],
-    [stamp(item.created_at), item.report_saved === false ? "검증 기록 서버 미저장(개인정보 보호 모드)" : `검증 기록 서버 저장(기록 ID ${filled(item.id)})`],
-    [meta.issuedText, `문서 발급(문서번호 ${meta.docNo}, ${meta.issuance ? "발급 서버 등록" : "미등록"})`],
-  ];
+  const rows=[],run=item.verification_run,timing=item.verification_timing;
+  if(run?.events?.length){
+    for(const e of run.events){
+      rows.push([`${stamp(e.at)}\n브라우저 기록`,`${e.message}${e.filename?`\n대상: ${e.filename}`:''}${e.job_id?`\n작업: ${e.job_id}`:''}`]);
+      if(e.server_timing?.started_at)rows.push([`${stamp(e.server_timing.started_at)}\n서버 기록`,`${e.asset_role==='output'?'결과':'입력'} 이미지 C2PA 검사 시작${e.filename?` · ${e.filename}`:''}`]);
+      if(e.server_timing?.completed_at)rows.push([`${stamp(e.server_timing.completed_at)}\n서버 기록`,`${e.asset_role==='output'?'결과':'입력'} 이미지 C2PA 검사 종료`]);
+    }
+  }else if(timing){
+    if(timing.started_at)rows.push([`${stamp(timing.started_at)}\n서버 기록`,"해당 이미지 C2PA 검사 시작"]);
+    if(timing.completed_at)rows.push([`${stamp(timing.completed_at)}\n서버 기록`,"해당 이미지 C2PA 검사 종료"]);
+  }else rows.push([stamp(item.created_at),"기록된 검사 시각 · 단계별 실행 시각은 저장되지 않음"]);
+  rows.push([meta.issuedText,`문서 발급(문서번호 ${meta.docNo}, ${meta.issuance ? "발급 서버 등록" : "미등록"}) · 검사 시각과 별도`]);
+  return rows;
 }
 const historyCols = [{title:"일시", w:0.38, align:"center"}, {title:"처리 내용", w:0.62}];
 function actionRows(item) {
@@ -759,7 +764,7 @@ const checkCols = [{title:"순번", w:0.07, align:"center"}, {title:"결과", w:
 // Result table of the analysis report: item, criterion, result, judgement.
 function resultRows(item, f) {
   const n = manifestCount(item), pq = pqEvidence(item), rows = [];
-  rows.push(["C2PA 기록", "Manifest Store 판독", n ? `Manifest ${n}개` : "없음", n ? "확인" : "없음"]);
+  rows.push(["C2PA 기록", "Manifest Store 판독", n ? `Manifest ${n}개` : item.state === "NoManifest" ? "확인되지 않음" : "확인 불가", n ? "확인" : "미확인"]);
   if (!n) {
     rows.push(["서명·결합 검사", "C2PA 2.4 제15장", "기록이 없어 수행하지 않음", "해당 없음"]);
   } else {
@@ -768,16 +773,16 @@ function resultRows(item, f) {
     rows.push(["Assertion 무결성", "assertion.hashedURI.match", f.hashBad.length ? `${f.hashBad.length}건 불일치` : f.hashMatch ? `${f.hashMatch}건 일치` : "결과 없음", f.hashBad.length ? "실패" : f.hashMatch ? "통과" : "—"]);
     const bind = [...f.bindBad, ...f.bindOk][0]?.code?.replace(/\.(match|mismatch)$/, "") || "assertion.dataHash";
     rows.push(["파일 결합(하드 바인딩)", `${bind}.match`, f.bindBad.length ? "서명 당시와 다름" : f.bindOk.length ? "서명 당시와 일치" : "결과 없음", f.bindBad.length ? "실패" : f.bindOk.length ? "통과" : "—"]);
-    rows.push(["서명자 신뢰", "signingCredential.trusted", f.credBad.length ? codeList(f.credBad) : f.trusted ? `연결됨${item.trust_profile === "lab" ? "(프로젝트 CA 기준)" : ""}` : f.untrusted ? "연결되지 않음" : "결과 없음", f.credBad.length ? "실패" : f.trusted ? "확인" : "미확인"]);
+    rows.push(["서명자 신뢰", "signingCredential.trusted", f.credBad.length ? codeList(f.credBad) : f.trusted ? `연결됨${item.trust_profile === "lab" ? "(자체 CA 기준)" : ""}` : f.untrusted ? "연결되지 않음" : "결과 없음", f.credBad.length ? "실패" : f.trusted ? "확인" : "미확인"]);
     const ocsp = f.ocsp[0]?.code;
     rows.push(["인증서 폐지 조회", "signingCredential.ocsp", ocsp === "signingCredential.ocsp.notRevoked" ? "폐지되지 않음" : ocsp === "signingCredential.ocsp.revoked" ? "폐지됨" : "조회하지 않음", ocsp === "signingCredential.ocsp.revoked" ? "실패" : ocsp === "signingCredential.ocsp.notRevoked" ? "통과" : "미수행"]);
     const tsCodes = f.ts.map(c => c.code);
     rows.push(["타임스탬프", "timeStamp.validated", !tsCodes.length ? "기록 없음" : [tsCodes.includes("timeStamp.validated") ? "서명·해시 일치" : "", tsCodes.includes("timeStamp.untrusted") ? "기관 신뢰 미확인" : tsCodes.includes("timeStamp.trusted") ? "기관 신뢰 확인" : ""].filter(Boolean).join(", ") || codeList(f.ts),
       !tsCodes.length ? "해당 없음" : f.ts.some(c => c.kind === "failure") ? "실패" : tsCodes.includes("timeStamp.untrusted") ? "참고" : "통과"]);
     if (f.ingredient.length || (item.ingredients || []).length) rows.push(["재료 Manifest", "ingredient.*", f.ingredient.some(c => c.kind === "failure") ? "실패 항목 있음" : f.ingredient.length ? "검증 통과" : `재료 ${(item.ingredients || []).length}건 기록`, f.ingredient.some(c => c.kind === "failure") ? "실패" : f.ingredient.length ? "통과" : "참고"]);
-    rows.push(["AI 생성 선언", "digitalSourceType", item.ai === "declared" ? "선언 있음" : "선언 없음", "참고"]);
+    rows.push(["AI 생성 선언", "digitalSourceType", aiReportDescription(item), "참고"]);
   }
-  rows.push(["양자내성 보조 서명(P1)", "ML-DSA-65 (FIPS 204)", pq.present ? PQ_STATUS[pq.status] || pq.status : "증거 없음", pq.status === "VALID" ? "통과" : pq.status === "INVALID" ? "실패" : pq.status === "UNVERIFIED" ? "미수행" : "해당 없음"]);
+  rows.push(["양자내성 보조 서명(P1)", pq.detached ? pq.schema : "ML-DSA-65 (FIPS 204)", pq.present ? PQ_STATUS[pq.status] || pq.status : "DB P1 미조회", pq.status === "VALID" ? "통과" : pq.status === "INVALID" ? "실패" : "미확인"]);
   return rows.map((row, i) => [String(i + 1), ...row.slice(0, 3), {text:row[3], bold:row[3] === "실패"}]);
 }
 const resultCols = [{title:"번호", w:0.07, align:"center"}, {title:"분석 항목", w:0.22}, {title:"검사 기준", w:0.3, mono:true}, {title:"결과", w:0.27}, {title:"판정", w:0.14, align:"center"}];
@@ -785,8 +790,9 @@ const resultCols = [{title:"번호", w:0.07, align:"center"}, {title:"분석 항
 function pqRows(item) {
   const sig = item.signature || {}, alg = algInfo(sig.alg), pq = pqEvidence(item), rows = [];
   const classical = alg ? !alg.pq : Boolean(sig.alg);
-  if (sig.alg) rows.push(["C2PA 클레임 서명", algLabel(sig.alg), alg ? alg.family : "확인 불가", classical ? "없음" : "있음", classical ? "2030년 이후 사용 자제, 2035년 이후 사용 금지" : "양자내성 표준"]);
-  if (pq.present) rows.push(["PQ-C2PA P1 증거", filled(pq.signature_algorithm, "ML-DSA-65"), "격자 기반", "있음", `서명 검사: ${PQ_STATUS[pq.status] || pq.status}`]);
+  if (sig.alg) rows.push(["C2PA 클레임 서명", algLabel(sig.alg), alg ? alg.family : "확인 불가", classical ? "없음" : "있음", classical ? "양자컴퓨터 등장 시 취약 가능" : "양자내성 알고리즘"]);
+  if (pq.detached) rows.push(["DB 분리 저장 P1", pq.schema, "실험 프로파일", "서버 검사", `서명 검사: ${PQ_STATUS[pq.status] || pq.status}`]);
+  else if (pq.present) rows.push(["PQ-C2PA P1 증거", filled(pq.signature_algorithm, "ML-DSA-65"), "격자 기반", "있음", `서명 검사: ${PQ_STATUS[pq.status] || pq.status}`]);
   return rows;
 }
 const pqCols = [{title:"서명 대상", w:0.19}, {title:"알고리즘", w:0.27}, {title:"계열", w:0.12, align:"center"}, {title:"양자내성", w:0.11, align:"center"}, {title:"NIST IR 8547 기준", w:0.31}];
@@ -822,12 +828,12 @@ function observations(item, f) {
     const src = uniq(acts.map(a => a.digitalSourceType).filter(Boolean).map(sourceType));
     out.push(`기록된 제작·편집 작업은 ${names}${src.length ? `이며, 출처 유형은 ${src.join(", ")}로 기록됨.` : "임."}`);
   } else out.push("기록된 제작·편집 작업은 없음.");
-  out.push(item.ai === "declared" ? "Manifest에 생성형 AI 사용이 선언되어 있음(서명자가 기록한 선언임)." : "생성형 AI 사용 선언은 확인되지 않음.");
+  out.push(hasAiRecord(item) ? `${aiReportDescription(item)}.` : "생성형 AI 사용 선언은 확인되지 않음.");
   const ings = item.ingredients || [];
   if (ings.length) out.push(`재료(Ingredient) ${ings.length}건이 기록됨: ${ings.map(i => `${filled(i.title, "제목 없음")}(${filled(i.relationship, "관계 미기재")})`).join(", ")}.`);
   const alg = algInfo(sig.alg), pq = pqEvidence(item);
   const algText = sig.alg ? `클레임 서명 알고리즘 ${algLabel(sig.alg)}은 ${alg && alg.pq ? "양자내성 표준 방식임" : "양자내성이 없는 방식임"}.` : "서명 알고리즘을 확인하지 못함.";
-  out.push(`${algText} ${pq.present ? `PQ-C2PA P1 증거가 있으며, ML-DSA-65 서명 검사 결과는 ‘${PQ_STATUS[pq.status] || pq.status}’임.` : "PQ-C2PA P1 증거는 없음."}`);
+  out.push(`${algText} ${(pq.detached || item.pqc_process) ? pqConclusion(pq) : pq.present ? `PQ-C2PA P1 증거가 있으며, ML-DSA-65 서명 검사 결과는 ‘${PQ_STATUS[pq.status] || pq.status}’임.` : "이미지 내 P1은 확인되지 않았으며 외부 DB는 조회하지 않음."}`);
   const covered = /^(claimSignature|assertion\.(hashedURI|dataHash|bmffHash|boxesHash|collectionHash|missing|inaccessible)|signingCredential|timeStamp)/;
   const others = f.failures.filter(c => !covered.test(String(c.code || "")));
   if (others.length) out.push(`그 밖의 실패 항목: ${others.map(c => `${c.code}${CODE_KO[c.code] ? `(${CODE_KO[c.code]})` : ""}`).join(", ")}.`);
@@ -839,25 +845,55 @@ function summaryReport(r, item, ctx) {
   const {meta, preview} = ctx, f = facts(item), op = opinion(item, f), sig = item.signature || {}, pq = pqEvidence(item), n = manifestCount(item);
   r.title(TYPES.summary.title);
   r.kv([["확인 대상", `${filled(item.filename)}\n${fileLine(item)}`], ["SHA-256", filled(item.sha256), {mono:true}],
-    ["확인 일시", stamp(item.created_at)], ["확인 방법", `${modeKo(item)}\n신뢰 기준: ${trustKo(item)}`]], {labelW:0.2, image:preview});
+    ["C2PA 검사 일시", inspectionPeriod(item)], ["확인 방법", `${modeKo(item)}\n신뢰 기준: ${trustKo(item)}`]], {labelW:0.2, image:preview});
   const changed = item.state === "NoManifest" ? "판단 불가" : f.bindBad.length || f.sigBad.length || f.hashBad.length ? "변경됨" : f.sigOk && f.bindOk.length ? "변경 없음" : "판단 불가";
   r.resultBox("확인 결과", stateOf(item).label, op.level === "판단 유보" || op.level === "판단 불가" ? stateOf(item).line : op.statement);
   r.grid([{title:"번호", w:0.07, align:"center"}, {title:"확인 항목", w:0.22}, {title:"결과", w:0.15, align:"center"}, {title:"내용", w:0.56}], [
     ["1", "출처 기록(C2PA)", {text:n ? "있음" : "없음", bold:true}, n ? `C2PA Manifest ${n}개 확인` : "확인 가능한 기록 없음. 기록이 없다는 이유만으로 조작으로 판단할 수 없음"],
     ["2", "서명 이후 변경", {text:changed, bold:changed === "변경됨"}, changed === "변경됨" ? (f.bindBad.length ? "파일 데이터 해시가 서명 당시와 다름" : "서명된 기록과 실제 기록이 다름") : changed === "변경 없음" ? "서명과 파일 데이터 해시가 서명 당시와 일치" : "검사하지 못함"],
-    ["3", "서명자 확인", {text:item.state === "NoManifest" ? "해당 없음" : f.trusted ? "확인" : "미확인", bold:false}, item.state === "NoManifest" ? "—" : f.trusted ? `${filled(sig.common_name)}${item.trust_profile === "lab" ? "(프로젝트 CA 기준)" : ""}` : `${filled(sig.common_name, "서명자")}: 선택한 신뢰 기준에서 확인되지 않음`],
-    ["4", "AI 생성 선언", {text:item.ai === "declared" ? "있음" : "없음", bold:false}, item.ai === "declared" ? "서명자가 생성형 AI 사용을 기록함(AI 탐지 결과 아님)" : "확인 가능한 선언 없음"],
-    ["5", "양자내성 서명", {text:pq.present ? PQ_STATUS[pq.status] : "없음", bold:false}, pq.present ? "PQ-C2PA P1(ML-DSA-65) 증거 확인" : "PQ-C2PA P1(ML-DSA-65) 증거 없음"],
+    ["3", "서명자 확인", {text:item.state === "NoManifest" ? "해당 없음" : f.trusted ? "확인" : "미확인", bold:false}, item.state === "NoManifest" ? "—" : f.trusted ? `${filled(sig.common_name)}${item.trust_profile === "lab" ? "(자체 CA 기준)" : ""}` : `${filled(sig.common_name, "서명자")}: 선택한 신뢰 기준에서 확인되지 않음`],
+    ["4", "AI 생성 선언", {text:hasAiRecord(item) ? "기록 있음" : "미확인", bold:false}, aiReportDescription(item)],
+    ["5", "양자내성 서명", {text:pq.present ? PQ_STATUS[pq.status] : "미확인", bold:false}, pq.present ? "PQ-C2PA P1(ML-DSA-65) 증거 확인" : "이미지 내 미발견 · 외부 DB 미조회"],
   ]);
   if (n) r.kv([["생성 도구", filled(softwareName(item), "기록 없음")], ["서명자", `${filled(sig.common_name, "확인되지 않음")}${sig.issuer ? ` (발급자 ${sig.issuer})` : ""}`],
     ["기록된 작업", (item.actions || []).length ? item.actions.map(a => ACTION_KO[a.action] || a.action).join(" → ") : "기록 없음"],
     ["출처 유형", uniq((item.actions || []).map(a => a.digitalSourceType).filter(Boolean).map(sourceType)).join(", ") || "기록 없음"]], {labelW:0.18});
   const caution = ["이 결과는 C2PA 기록의 서명·결합 상태를 확인한 것으로, 사진·영상 내용의 사실 여부를 판정하지 않음.",
     "C2PA 기록이 없다는 사실만으로 조작 여부를 판단할 수 없음.", "AI 생성 선언은 서명자가 기록한 내용으로, AI 탐지 결과가 아님."];
-  if (item.trust_profile === "lab") caution.push("프로젝트 자체 CA를 Trust Anchor로 등록한 신뢰 기준으로 서명자를 확인함.");
+  if (item.trust_profile === "lab") caution.push("자체 CA를 Trust Anchor로 등록한 신뢰 기준을 선택함. 서명자 신뢰는 검사 결과를 참조함.");
   if (!ctx.composite) drawIssuance(r, meta, ctx.options);
   caution.forEach(text => r.item("※", text, {level:0, size:17, family:SANS, color:C.muted, after:2}));
   r.space(14); r.center("- 이하 여백 -", {squeeze:true});
+}
+
+function conversionEvidenceSection(r, item, ctx) {
+  if (item.conversion_v4) { v4Report(r,item); return; }
+  if (item.pqc_process) {
+    const process=item.pqc_process, job=process.job;
+    const labels={SKIPPED:"PQC 처리 미수행",UNAVAILABLE:"PQC 서버 연결 또는 요청 실패",FAILED:"PQC 처리 실패",OUTPUT_UNAVAILABLE:"결과 이미지 확인 미완료",QUEUED:"대기 중",PROCESSING:"처리 중",COMPLETED:"필수 검사 통과 미확인"};
+    r.subHead("PQC 통합 처리 상태",180);
+    r.para(pqConclusion(pqEvidence(item)),{size:18,family:SANS});
+    r.kv([["PQC 처리 상태",labels[process.status] || "미완료"],["확인된 내용",filled(process.message || job?.error?.message)],["작업 ID",filled(job?.conversion_id,"발급 또는 조회하지 못함")],["오류 코드",filled(job?.error?.code,"서버가 반환한 오류 코드 없음")],["C2PA 검사 대상","입력 이미지 · 보호된 결과 이미지의 검사가 아님"]],{labelW:0.28,size:17});
+    r.para("PQC 처리 미완료를 보호 기록이 없다는 뜻으로 해석할 수 없음. 이 보고서는 현재 확인된 C2PA 검사와 PQC 처리 상태를 함께 기록함.",{size:17,family:SANS,color:C.muted});
+    return;
+  }
+  const pq=pqEvidence(item), job=ctx.options.conversion, source=job?.source || {}, output=job?.result || {};
+  r.subHead("PQC 변환 및 양자내성 검사 정보", 180);
+  r.para(pqConclusion(pq), {size:18, family:SANS});
+  const rows=[
+    ["P1 서명 검사", PQ_STATUS[pq.status] || "확인 불가"],
+    ["외부 DB P1 조회", "수행하지 않음 · DB 연동 필요"],
+    ["서명 알고리즘", filled(pq.signature_algorithm, pq.present ? "기록 없음" : "해당 없음")],
+    ["P1 데이터 해시", pq.payload_hash_valid === true ? "일치" : pq.payload_hash_valid === false ? "불일치" : "확인하지 않음"],
+    ["P1 페이로드 SHA3-256", filled(pq.payload_sha3_256)],
+    ["기록된 원본 M0 Manifest", filled(pq.m0_active_manifest)],
+    ["기록된 원본 SHA3-256", filled(pq.source_file_sha3_256)],
+    ["P1 생성 시각", pq.created_at ? stamp(pq.created_at) : "기록 없음"],
+    ["변환 작업 기록", job ? "현재 브라우저 변환 기록과 결과 파일 해시 일치" : "연결된 작업 기록 없음 또는 확인하지 못함"]
+  ];
+  if(job) rows.push(["변환 입력 파일",filled(source.filename)], ["변환 결과 파일",filled(output.filename)]);
+  r.kv(rows,{labelW:0.28,size:17});
+  r.para("화면에서 검사한 P1은 이미지 내 기존 형식임. 외부 DB P1은 조회하지 않음. 원본 식별자와 해시의 기재는 원본 파일을 직접 대조했다는 뜻이 아님. 서명 유효성과 공개키 소유자 신뢰는 별도임.",{size:17,family:SANS,color:C.muted});
 }
 
 function submissionReport(r, item, ctx) {
@@ -865,8 +901,8 @@ function submissionReport(r, item, ctx) {
   const showCompare = Boolean(manifestThumb && currentImage), showImage = showCompare || Boolean(preview);
   r.title(TYPES.submission.title, "C2PA Content Credentials");
   const head = [["문서번호", `${meta.docNo} (${meta.issuedDot}${meta.issuance ? "" : ", 미등록"})`], ["신청인", requesterText(options)]];
+  if (typed(options.submitTo)) head.push(["제출처", declared(options.submitTo)]);
   if (typed(options.purpose)) head.push(["확인 요청", declared(options.purpose)]);
-  head.push(["사건번호", POLICE_BLANK], ["접수 일자", POLICE_BLANK]);
   r.fields(head);
 
   r.boxHead("검증물");
@@ -876,19 +912,21 @@ function submissionReport(r, item, ctx) {
   if (item.sha3_256) r.item("-", `SHA3-256 : ${item.sha3_256}`, {level:2, size:20});
   if (item.source_url) r.item("-", `수집 URL : ${item.source_url}`, {level:2, size:20});
 
+  r.item("-", `C2PA 검사 일시 : ${inspectionPeriod(item)}`, {level:2,size:18});
+
   r.boxHead("검증사항");
   const asks = ["검증물에 C2PA 출처 기록(Manifest)이 있는지 여부", "C2PA 서명 이후 검증물 또는 출처 기록이 변경되었는지 여부", "서명자가 선택한 신뢰 기준에서 확인되는지 여부"];
-  if (pq.present) asks.push("양자내성 보조 서명(PQ-C2PA P1, ML-DSA-65)이 유효한지 여부");
+  asks.push("양자내성 보조 서명(PQ-C2PA P1, ML-DSA-65)의 확인 결과");
   asks.forEach((text, i) => r.item(`${i + 1}.`, text, {level:1}));
 
   r.numHead("1. 검증 방법");
   const methods = [
-    "검증물 전체 바이트의 SHA-256·SHA3-256 해시를 계산하여 검증물을 특정함.",
+    `파일 식별 해시: SHA-256 ${item.sha256 ? "계산됨" : "미확인"}, SHA3-256 ${item.sha3_256 ? "계산됨" : "미확인"}.`,
     `공식 C2PA SDK(${engineKo(item, env)})로 검증물에 내장된 Manifest를 판독하고, C2PA 기술 사양${specVersion(item) ? ` ${specVersion(item)}` : ""} 제15장(검증)에 따라 클레임 서명, Assertion 참조 해시, 파일 데이터 해시를 검사함.`,
     `서명 인증서를 신뢰 기준(${trustKo(item)})에 대조하여 서명자 신뢰 여부를 판정함.`,
     `원격 Manifest 조회는 ${item.network_policy?.remote_manifests ? "허용" : "하지 않았고"}, 인증서 폐지(OCSP) 조회는 ${item.network_policy?.ocsp ? "수행함" : "하지 않음"}.`,
   ];
-  if (pq.present) methods.push(`P1 증거의 ML-DSA-65 서명을 ${pq.verifier || env?.pq_evidence_verifier || "OpenSSL"}로 검사함.`);
+  if (pq.present) methods.push(pq.status === "VALID" || pq.status === "INVALID" ? `P1 증거의 검사 결과: ${pqConclusion(pq)}` : "P1 양자내성 서명 검사를 완료하지 못함.");
   methods.push("검증 환경과 처리 이력은 붙임 2와 같음.");
   methods.forEach((text, i) => r.item(ga(i), text));
 
@@ -902,11 +940,12 @@ function submissionReport(r, item, ctx) {
   r.item(ga(i++), "검증 과정에서 보고된 상태 코드 전체는 붙임 1과 같음.");
 
   r.numHead("3. 검증 결과");
-  const results = [`검증사항 1 : 검증물에는 C2PA 출처 기록이 ${manifestCount(item) ? `있음(Manifest ${manifestCount(item)}개).` : "없음."}`,
+  const results = [`검증사항 1 : 검증물에는 C2PA 출처 기록이 ${manifestCount(item) ? `있음(Manifest ${manifestCount(item)}개).` : item.state === "NoManifest" ? "확인되지 않음." : "검사를 완료하지 못해 확인 불가."}`,
     `검증사항 2 : ${changeConclusion(item, f, op)}`, `검증사항 3 : ${trustConclusion(item, f)}`];
-  if (pq.present) results.push(`검증사항 4 : ${pqConclusion(pq)}`);
+  results.push(`검증사항 4 : ${pqConclusion(pq)}`);
   results.forEach((text, j) => r.item(ga(j), text));
 
+  conversionEvidenceSection(r, item, ctx);
   r.numHead("4. 비고");
   const remarks = notes(item, f);
   remarks.push(DECLARED_NOTE, ...identityRemarks(options), issuanceRemark(meta));
@@ -919,7 +958,7 @@ function submissionReport(r, item, ctx) {
   r.space(16); r.ensure(annexes.length * 36 + 270);
   annexes.forEach((text, j) => r.item(j ? "" : "붙임", `${j + 1}. ${text}${j === annexes.length - 1 ? "  끝." : ""}`, {level:0, markW:76, after:2}));
 
-  r.signatures({date:meta.issuedDot, org:orgName(options), signers:[["신 청 인", options.applicant], ["접 수 자", ""]]});
+  r.signatures({date:meta.issuedDot, org:orgName(options), signers:[["신 청 인", options.applicant]]});
   if (!ctx.composite) { r.space(6); drawIssuance(r, meta, options); }
 
   r.annexHead("붙임 1", "검증 상태 코드 목록", {page:"auto", keep:200});
@@ -931,6 +970,7 @@ function submissionReport(r, item, ctx) {
   r.annexHead("붙임 2", "검증 환경 및 처리 이력", {keep:300});
   r.kv(environmentRows(item, env), {labelW:0.2, size:18});
   r.grid(historyCols, historyRows(item, meta));
+  r.para("각 시각은 해당 이미지 검사 기록을 사용함. 브라우저 요청·응답 시각과 서버 C2PA 검사 시각은 별도이며 TSA가 보증한 시각이 아님.",{size:17,family:SANS,color:C.muted});
 
   if (showImage) {
     r.annexHead("붙임 3", "검증물 화면", {keep:showCompare ? 470 : 520});
@@ -951,22 +991,22 @@ function technicalReport(r, item, ctx) {
   const annexNo = label => annexes.find(a => a.label === label)?.no;
 
   r.title(TYPES.technical.title, "C2PA Provenance and Integrity Analysis", {after:12});
-  const purpose = typed(options.purpose) ? declared(options.purpose) : "C2PA 출처 기록의 존재, 서명·파일 결합의 유효성, 서명자 신뢰 여부 확인";
+  const purpose = "C2PA 출처 기록의 존재, 서명·파일 결합의 유효성, 서명자 신뢰 여부 확인";
   r.kv([
-    ["1. 신청인", requesterText(options)],
-    ["2. 분석 목적", purpose],
-    ["3. 분석 대상", `${filled(item.filename)} (${fileLine(item)})\nSHA-256 : ${filled(item.sha256)}`],
-    ["4. 분석 일시", period(item.created_at, meta.issued)],
-    ["5. 분석 방법", `C2PA 기술 사양${specVersion(item) ? ` ${specVersion(item)}` : ""} 제15장(검증), 의견 표현 SWGDE 18-I-001, P1 서명 NIST FIPS 204`],
-    ["6. 분석 환경", `${item.processing_mode === "browser" ? "브라우저 검증" : "로컬 서버 검증"}, ${engineKo(item, env)}, 신뢰 기준 ${trustKo(item)}`],
+    ["1. 분석 목적", purpose],
+    ["2. 분석 대상", `${filled(item.filename)} (${fileLine(item)})\nSHA-256 : ${filled(item.sha256)}`],
+    ["3. C2PA 검사 일시", inspectionPeriod(item)],
+    ["4. 문서 발급 일시", meta.issuedText],
+    ["5. 분석 방법", `C2PA 기술 사양${specVersion(item) ? ` ${specVersion(item)}` : ""} 제15장(검증), ${pq.detached ? "V4 서버의 분리 저장 P1 검사 상태 확인" : `${pq.present && ["VALID", "INVALID"].includes(pq.status) ? "이미지 내 P1 서명 검사" : "P1 서명 검사 미완료"}, 외부 DB 미조회`}`],
+    ["6. 분석 환경", `${item.processing_mode === "browser" ? "브라우저 검증" : "사이트 서버 검증"}, ${engineKo(item, env)}, 신뢰 기준 ${trustKo(item)}`],
   ], {labelW:0.17, size:18, labelAlign:"left", padY:6});
   r.grid(resultCols, resultRows(item, f), {padY:5, caption:`7. 분석 결과${annexNo("검증 상태 코드") ? ` (상태 코드 전체는 별첨 ${annexNo("검증 상태 코드")})` : ""}`});
-  r.subHead("8. 의견 및 해석", 110);
-  r.para(`※ 아래는 분석 결과에 근거한 의견으로, 결과와 구분하여 기재함(KS Q ISO/IEC 17025 7.8.7). 명제와 척도는 별첨 ${annexNo("평가 방법 및 한계")} 참조.`, {size:17, family:SANS, color:C.muted, after:4});
+  conversionEvidenceSection(r, item, ctx);
+  r.subHead("8. 의견 및 해석", 350);
+  r.para(`※ 아래 내용은 실제 보고된 검사 결과의 해석이며, 확인되지 않은 사실을 추정하지 않음.`, {size:17, family:SANS, color:C.muted, after:4});
   r.item("가.", `의견 : ${op.level}`, {level:1, size:20, family:SANS});
   r.item("나.", op.statement, {level:1, size:20, family:SANS, after:12});
-  r.confirmRow([["신청인", signedName(options.applicant)], ["확인자", ""]]);
-  [DECLARED_NOTE, "이 분석서의 결과는 제시된 파일에 한정되며, 연구용 도구가 생성한 문서로 KOLAS 인정 시험성적서 또는 공인 감정서가 아님."]
+  ["이 분석서의 결과는 제시된 파일에 한정되며, 연구용 도구가 생성한 문서로 KOLAS 인정 시험성적서 또는 공인 감정서가 아님."]
     .forEach(text => r.item("※", text, {level:0, size:15, family:SANS, color:C.muted, after:1}));
   r.space(6);
   if (!composite) drawIssuance(r, meta, options, {compact:true});
@@ -981,13 +1021,14 @@ function technicalReport(r, item, ctx) {
     r.subHead("가. 분석 대상"); r.kv(identityRows(item), {size:18});
     r.subHead("나. 분석 환경"); r.kv(environmentRows(item, env), {size:18});
     r.subHead("다. 처리 이력"); r.grid(historyCols, historyRows(item, meta));
-    r.para("분석은 업로드된 작업 사본으로 수행하였으며, 파일을 수정하지 않음.", {size:18, family:SANS, color:C.muted});
+    r.para("각 시각은 해당 이미지 검사 기록을 사용함. 브라우저 요청·응답 시각과 서버 C2PA 검사 시각을 구분하며, 이 기록은 TSA가 보증한 시각이 아님.",{size:17,family:SANS,color:C.muted});
+    r.para(item.conversion_v4 ? "현재 분석 대상은 PQC 처리 후 수신한 결과 이미지이며 입력 이미지 검사 기록은 verification-record.json의 input_inspection에 포함됨." : "현재 분석 대상은 업로드된 입력 이미지임.", {size:18, family:SANS, color:C.muted});
   }
   function annexStructure(r, a) {
     r.annexHead(`별첨 ${a.no}`, a.label);
     r.subHead("가. 활성 Manifest 서명 정보");
     r.kv([["활성 Manifest", filled(item.store?.active_manifest, "없음"), {mono:true}], ["Manifest 수", `${n}개`], ...signatureRows(item),
-      ["AI 생성 선언", item.ai === "declared" ? "Manifest에 선언됨" : "확인 가능한 선언 없음"]], {size:18});
+      ["AI 생성 선언", aiReportDescription(item)]], {size:18});
     r.subHead("나. Manifest 목록", 130);
     r.grid([{title:"Manifest 식별자", w:0.36, mono:true}, {title:"구분", w:0.1, align:"center"}, {title:"생성 도구", w:0.2}, {title:"서명자 / 알고리즘", w:0.22}, {title:"Assertion", w:0.12, align:"center"}],
       Object.entries(item.store?.manifests || {}).map(([label, m]) => [label, label === item.store?.active_manifest ? "활성" : "이전",
@@ -1032,18 +1073,21 @@ function technicalReport(r, item, ctx) {
     if (rows.length) r.grid(pqCols, rows, {size:17}); else r.para("검증할 서명이 없어 평가하지 않음.", {size:19, family:SANS});
     if (composite) { r.para("P1 증거의 상세 내용, 원본·변환본 연결 검증과 양자내성 해석은 제1편 PQ 변환 확인서 참조.", {size:18, family:SANS, color:C.muted}); return; }
     r.subHead("나. 양자내성 보조 서명(P1)", 120);
-    if (pq.present) {
+    if (pq.detached) {
+      r.kv([["검사 결과",PQ_STATUS[pq.status]],["저장 위치","이미지와 분리해 DB 저장"],["프로파일",pq.schema]],{size:18});
+      r.para("현재 변환 요청과 기존 등록 검증 기록의 상세 상태는 본문의 V4 변환·재사용 기록 참조. API가 제공하지 않은 P1 서명 바이트·공개키·해시 원문은 기재하지 않음.",{size:18,family:SANS});
+    } else if (pq.present) {
       r.kv([["검사 결과", PQ_STATUS[pq.status] || pq.status, {bold:true}], ["사유", terse(pq.reason || "—")], ["스키마", filled(pq.schema)], ["서명 알고리즘", filled(pq.signature_algorithm)],
         ["페이로드 SHA3-256", filled(pq.payload_sha3_256), {mono:true}],
         ["페이로드 해시 일치", pq.payload_hash_valid === true ? "일치" : pq.payload_hash_valid === false ? "불일치" : "확인하지 않음"],
         ["원본 M0 Manifest", filled(pq.m0_active_manifest), {mono:true}], ["원본 파일 SHA3-256", filled(pq.source_file_sha3_256), {mono:true}],
         ["P1 생성 시각", pq.created_at ? stamp(pq.created_at) : "정보 없음"], ["P1 공개키 SHA-256", filled(pq.public_key_sha256), {mono:true}],
         ["P1 서명 크기", pq.signature_bytes ? `${pq.signature_bytes.toLocaleString("ko-KR")} B` : "정보 없음"]], {labelW:0.24, size:18});
-    } else r.para("PQ-C2PA P1(ML-DSA-65) 증거 없음.", {size:19, family:SANS});
+    } else r.para("이미지 내 P1은 확인되지 않음. 외부 DB의 P1은 조회하지 않았음.", {size:19, family:SANS});
     r.subHead("다. 표준화 현황", 200);
-    ["C2PA 사양 2.4는 ML-DSA(FIPS 204)를 향후 지원 알고리즘으로만 언급하므로, P1은 사용자 정의 Assertion(org.pq-c2pa.p1)으로 기록한 실험적 확장임.",
+    (pq.detached ? ["V4 P1은 HAETAE-3 실험 프로파일의 JUMBF 기록으로 DB에 별도 저장됨. 이미지 내 사용자 정의 P1 Assertion으로 해석하지 않음.","P1은 서버에 고정된 HAETAE 공개키로 검증하며 X.509 인증서 체인을 사용하지 않음. 외부 공인 신뢰나 독립 구현체의 상호운용 검증을 주장하지 않음."] : ["C2PA 사양 2.4는 ML-DSA(FIPS 204)를 향후 지원 알고리즘으로만 언급하므로, P1은 사용자 정의 Assertion(org.pq-c2pa.p1)으로 기록한 실험적 확장임.",
       "증거 파일을 다시 서명하면 파일이 바뀌어 동일성이 깨지므로, 원본 M0 기록은 재료(Ingredient)로 보존하고 새 M1에 P1을 연결함.",
-      "ML-DSA 인증서 형식은 IETF RFC 9881로 표준화됨."].forEach((text, i) => r.item(`${i + 1})`, text, {level:2, size:19, family:SANS}));
+      "ML-DSA 인증서 형식은 IETF RFC 9881로 표준화됨."]).forEach((text, i) => r.item(`${i + 1})`, text, {level:2, size:19, family:SANS}));
     r.grid([{title:"알고리즘", w:0.4}, {title:"공개키 크기(B)", w:0.3, align:"center"}, {title:"서명 크기(B)", w:0.3, align:"center"}],
       [["ES256 (ECDSA P-256)", "65", "64"], ["ML-DSA-44", "1,312", "2,420"], ["ML-DSA-65", "1,952", "3,309"], ["ML-DSA-87", "2,592", "4,627"]], {size:17, caption:"서명 알고리즘별 크기(FIPS 204)", numbered:true});
   }
@@ -1057,11 +1101,7 @@ function technicalReport(r, item, ctx) {
   }
   function annexMethod(r, a) {
     r.annexHead(`별첨 ${a.no}`, a.label);
-    r.subHead("가. 명제");
-    r.kv([["H1", "현재 파일과 C2PA 기록은 서명 이후 변경되지 않았으며, 기록은 서명자가 서명한 그대로임."], ["H2", "현재 파일 또는 C2PA 기록이 서명 이후 변경되었음."]], {labelW:0.1, size:18});
-    r.subHead("나. 의견 척도", 200);
-    r.grid([{title:"해당", w:0.08, align:"center"}, {title:"척도", w:0.24}, {title:"의미", w:0.68}], OPINION_SCALE.map(([level, desc]) => [level === op.level ? "●" : "", {text:level, bold:level === op.level}, desc]), {size:17});
-    r.para("결과는 수치 확률이 아닌 단계형 의견으로 표현함(SWGDE 18-I-001).", {size:17, family:SANS, color:C.muted});
+    r.para("검사 결과와 미수행 항목을 구분하여 해석함.", {size:18, family:SANS});
     r.subHead("다. 의견의 근거");
     op.basis.forEach((text, i) => r.item(`${i + 1})`, `${text}.`.replace(/\.\.$/, "."), {level:2, size:19, family:SANS}));
     r.subHead("라. 특기사항");
@@ -1072,8 +1112,6 @@ function technicalReport(r, item, ctx) {
     r.grid([{title:"구분", w:0.16}, {title:"항목", w:0.46}, {title:"확인 방법", w:0.38}], [
       ["시스템 확인", "파일 해시, C2PA 검증 결과·상태 코드, P1 서명, 검증 시각, 도구 버전", "공식 C2PA SDK와 OpenSSL로 직접 계산·검사"],
       ["서버 발급", "문서번호, 확인번호, 발급 시각, PDF 등록 해시", meta.issuance ? "발급 서버가 부여하고 발급 기록을 ML-DSA-65로 서명" : "미등록(작성자 PC에서 생성)"],
-      ["신청인 기재(*)", "신청인 이름, 제출처, 확인 요청 사항", "확인하지 않음"],
-      ["신청인 확인(선택)", "신청인 휴대폰 번호", identityOf(options).phone ? "문자 인증번호 확인, 발급 기록에 남김" : "사용하지 않음"],
     ], {size:17});
   }
   function annexRefs(r, a) {
@@ -1109,7 +1147,7 @@ function linkRows(item, f, m) {
       deltaFail.length ? "실패" : deltas.length ? "통과" : m.ingredient ? "참고" : "실패"],
     ["변환본 서명", "claimSignature.validated", f.sigOk ? "유효" : "유효하지 않음", f.sigOk ? "통과" : "실패"],
     ["변환본 파일 결합", "assertion.dataHash.match", f.bindBad.length ? "서명 당시와 다름" : f.bindOk.length ? "서명 당시와 일치" : "결과 없음", f.bindBad.length ? "실패" : f.bindOk.length ? "통과" : "—"],
-    ["변환본 서명자", "signingCredential.trusted", f.trusted ? `연결됨${item.trust_profile === "lab" ? "(프로젝트 CA 기준)" : ""}` : "연결되지 않음", f.trusted ? "확인" : "미확인"],
+    ["변환본 서명자", "signingCredential.trusted", f.trusted ? `연결됨${item.trust_profile === "lab" ? "(자체 CA 기준)" : ""}` : "연결되지 않음", f.trusted ? "확인" : "미확인"],
     ["원본 파일 대조", "원본 SHA3-256과 P1 기록값 대조", srcHash ? (srcMatch ? "일치(변환 기록)" : "불일치") : "원본 파일 제출 시 대조 가능", srcHash ? (srcMatch ? "통과" : "실패") : "해당 없음"],
     ["변환 당시 원본 상태", "P1의 m0_validation_state", pq.m0_validation_state ? STATES[pq.m0_validation_state]?.label || pq.m0_validation_state : "기록 없음", "참고"],
   ];
@@ -1175,7 +1213,7 @@ function pqConversionReport(r, item, ctx) {
   r.subHead("10. 의견 및 해석", 110);
   r.para("※ 아래는 위 검증 결과에 근거한 의견으로, 결과와 구분하여 기재함(KS Q ISO/IEC 17025 7.8.7).", {size:17, family:SANS, color:C.muted, after:4});
   r.item("가.", pqVerdict(item, rows), {level:1, size:20, family:SANS, after:12});
-  r.confirmRow([["신청인", signedName(options.applicant)], ["확인자", ""]]);
+  r.confirmRow([["신청인", signedName(options.applicant)]]);
 }
 
 function pqCompositeReport(r, item, ctx) {
@@ -1217,6 +1255,7 @@ function declaredValues(options) {
   return Object.fromEntries(Object.entries(DECLARED_KEYS).map(([key, field]) => [field, typed(options[key])]).filter(([, value]) => value));
 }
 export async function prepareIssuance(item, reportType, options = {}) {
+  if(reportType!=="submission")options=analysisOptions(options);
   const record = recordSnapshot(item), values = declaredValues(options), pq = pqEvidence(item);
   const hex64 = value => /^[0-9a-f]{64}$/.test(String(value || "")) ? value : null;
   return {
@@ -1232,7 +1271,33 @@ export async function prepareIssuance(item, reportType, options = {}) {
   };
 }
 
+function v4Report(r,item){
+  const job=item.conversion_v4,result=job.result||{},p=result.p1_validation||{},record=item.v4_registration_record;
+  const mode=result.resolution_mode||result.classic_action;
+  const modes={ADD_SOFT_BINDING:'M1 신규 생성 및 P1 발급',REUSE_EXISTING:'기존 Classic 매니페스트 재사용 및 P1 발급',EXISTING_OUTPUT:'등록 결과와 일치 · 기존 P1 재사용',EXISTING_SOURCE:'등록 원본과 일치 · 기존 결과 및 P1 재사용',RESTORED_CLASSIC:'Classic 기록 복구 · 기존 P1 재사용'};
+  const timestamp={NOT_AVAILABLE:'정보 없음',M0_TOKEN_EXISTING:'기존 M0 토큰 사용',M1_SIGTST2_ISSUED:'M1 sigTst2 발급'};
+  r.subHead('V4 변환·재사용 기록');
+  r.para('아래는 변환 서버의 응답이며, 이 보고서의 결과 이미지 Classic C2PA SDK 검사와 구분함.',{size:17,family:SANS});
+  r.kv([['변환 작업 ID',job.conversion_id],['처리 방식',modes[mode]||filled(mode)],['서버 처리 상태',job.status],['서버 신뢰 상태',filled(result.trust_status)],['P1 저장 위치','이미지와 분리해 DB 저장'],['실험 프로파일',filled(p.profile)],['컨테이너',filled(p.container)],['P1 매니페스트 ID',filled(p.manifest_id)],['DB 기록 쌍 ID',filled(result.manifest_pair_id)],['공유 핑거프린트(Base64)',filled(result.fingerprint_base64)]],{size:17});
+  const labels={assertion_hashes:'어설션 해시',ingredient_references:'재료 참조',source_evidence:'원본 근거',classic_validation:'서버 Classic 검사',claim_signature:'P1 클레임 서명',hard_binding:'하드 바인딩',soft_binding:'소프트 바인딩'};
+  r.kv(Object.entries(labels).map(([key,label])=>[label,filled(p[key])]),{size:18});
+  r.kv([['P1 서명 알고리즘',filled(p.signature_algorithm)],['타임스탬프 상태',timestamp[p.timestamp]||filled(p.timestamp)],['폐기 조회',p.revocation==='NOT_CHECKED'?'조회하지 않음':filled(p.revocation)],['신뢰 범위','서버에 고정된 HAETAE-3 공개키 기준'],['상호운용성',p.conformance==='EXPERIMENTAL_PQ_PROFILE'?'실험용 PQ 프로파일':filled(p.conformance)]],{size:17});
+  r.para('위 내용은 해당 변환 작업에 대해 V4 서버가 반환한 검사 결과임. P1 원문·서명 바이트를 이 브라우저가 독립 검증한 결과가 아님. 타임스탬프 상태는 토큰 발급 시각이 아님.',{size:16,family:SANS,color:C.muted});
+  r.subHead('기존 등록 검증 기록');
+  r.kv([['등록 검증 ID',filled(result.validation_id)],['등록 당시 종합 상태',filled(record?.overall_status)]],{size:18});
+  r.para(record?'기존 발급 시점의 DB 기록일 수 있으며 현재 업로드의 별도 검증 실행 기록으로 해석하지 않음.':'등록 검증 ID가 없거나 기록을 조회하지 못함. 현재 변환 응답의 검사 결과와 구분함.',{size:17,family:SANS});
+  for(const t of record?.timestamp_evidence||[])r.kv([['타임스탬프 용도',filled(t.purpose)],['실제 토큰 시각',filled(t.generation_time)],['토큰 SHA-256',filled(t.token_sha256)]],{size:17});
+  r.subHead('V4 결과의 해석 및 한계');
+  ['결과 이미지에는 Classic 기록이 포함될 수 있으나 P1은 이미지에 삽입되지 않고 DB에 별도 저장됨.','Image-Code는 등록 기록의 검색 키이며 진품 판정 근거가 아님. 기존 기록의 재사용·복구를 새 PQ 서명 발급으로 해석하지 않음.','P1은 로컬 HAETAE 공개키 기준의 신뢰이며 외부 공인 신뢰나 독립 구현체의 상호운용 검증을 뜻하지 않음.','사진 속 장면의 진실성, 법적 소유권 또는 AI 생성 여부를 단독 판정하지 않음.'].forEach(text=>r.item('※',text,{size:16,family:SANS,color:C.muted}));
+}
+
+function analysisOptions(options){
+  const clean={...options};
+  for(const key of [...Object.keys(DECLARED_KEYS),"contactPhone","phoneToken"])delete clean[key];
+  return clean;
+}
 export async function buildPdfReport(source, reportType = "technical", options = {}) {
+  if(reportType!=="submission")options=analysisOptions(options);
   const type = TYPES[reportType] ? reportType : "technical", spec = TYPES[type];
   const issuance = options.issuance && !options.issuance.offline && options.issuance.doc_no ? options.issuance : null;
   const record = recordSnapshot(source), recordJson = JSON.stringify(record, null, 2);
@@ -1241,7 +1306,7 @@ export async function buildPdfReport(source, reportType = "technical", options =
   let item = source;
   const p1 = pqEvidence(source);
   if (p1.present && !p1.public_key_sha256 && p1.public_key_pem) item = {...source, pq_evidence:{...p1, public_key_sha256:await sha256Hex(p1.public_key_pem)}};
-  if (type === "pq" && !hasP1(item)) throw new Error("PQ 변환본 보고서는 P1 양자내성 증거가 있는 변환본에서만 만들 수 있습니다.");
+  if (type === "pq") throw new Error("DB의 P1을 조회·검증하는 API가 연결되기 전에는 PQ 변환본 종합 보고서를 만들 수 없습니다.");
   // Issue time and number come from the server; without it the PC clock is used and marked.
   const server = issuance ? isoParts(issuance.issued_at) : null;
   const issued = server ? new Date(issuance.issued_at) : new Date();
@@ -1290,7 +1355,7 @@ export async function buildPdfReport(source, reportType = "technical", options =
     issued_at:issuance.issued_at, record:issuance.record, record_sha256:issuance.record_sha256, signature:issuance.signature}
     : {registered:false, reason:meta.offlineReason || null, local_doc_no:docNo, issued_at_pc:issued.toISOString(), snapshot_sha256:snapshotHash}, null, 2),
     "issuance-record.json", "발급 기록(서버 등록·ML-DSA-65 서명)");
-  if (type === "pq" && options.conversion) await attach(JSON.stringify(options.conversion, null, 2), "conversion-record.json", "PQ 변환 작업 기록");
+  if (options.conversion) await attach(JSON.stringify(options.conversion, null, 2), "conversion-record.json", "PQ 변환 작업 기록");
   return await doc.save();
 }
 

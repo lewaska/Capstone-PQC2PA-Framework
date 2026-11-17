@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         / "root-ca-cert.pem"
     )
     mldsa_private_key_passphrase: SecretStr | None = None
+    haetae_library_path: Path = PROJECT_ROOT / "native" / "haetae" / "libhaetae3.so"
+    haetae_public_key_path: Path = PROJECT_ROOT / "certs" / "public" / "haetae3-public.bin"
+    haetae_private_key_path: Path = PROJECT_ROOT / "secrets" / "pki" / "haetae3" / "haetae3-private.enc"
+    haetae_key_encryption_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
     openai_model: str | None = None
 
@@ -62,6 +66,7 @@ class Settings(BaseSettings):
         / "public"
         / "c2pa-es256-root-cert.pem"
     )
+    classic_tsa_url: str = "http://127.0.0.1:8000/api/v1/tsa/rfc3161"
 
     tsa_private_key_path: Path = (
         PROJECT_ROOT

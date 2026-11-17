@@ -134,7 +134,8 @@ def select_fingerprint(parsed: dict, current: SoftBindingFingerprint):
     return existing, "REUSE_EXISTING", "IMAGE_CODE_MATCH"
 
 
-def prepare_classic_for_pq(source: Path, output: Path) -> ClassicPreparation:
+def prepare_classic_for_pq(source: Path, output: Path,
+                           timestamp_authority_url: str | None = None) -> ClassicPreparation:
     source = Path(source).resolve()
     output = Path(output).resolve()
     if not source.is_file():
@@ -164,7 +165,13 @@ def prepare_classic_for_pq(source: Path, output: Path) -> ClassicPreparation:
         if mode == "REUSE_EXISTING":
             shutil.copyfile(source, candidate)
         else:
-            build_classic_update_manifest(source, candidate, fingerprint)
+            if timestamp_authority_url is None:
+                build_classic_update_manifest(source, candidate, fingerprint)
+            else:
+                build_classic_update_manifest(
+                    source, candidate, fingerprint,
+                    timestamp_authority_url=timestamp_authority_url,
+                )
 
         updated = read_and_parse_classic_manifest(candidate)
         require_valid_source(updated)
