@@ -2,7 +2,9 @@ openapi: 3.1.0
 info:
   title: PQ-C2PA Web Framework API
   version: 1.0.0
-  description: Classic C2PA 이미지를 내부 PQ-C2PA로 변환하고 검증하는 API
+  description: >-
+    DEPRECATED draft. 단일 PQ-C2PA 변환 설계를 전제로 하며,
+    현재 프런트엔드 계약은 specs/openapi-v2.yaml을 사용합니다.
 servers:
   - url: /api/v1
 paths:

@@ -8,6 +8,10 @@ from app.services.classic_c2pa import (
     ClassicC2PAReadError,
     read_and_parse_classic_manifest,
 )
+from app.services.fingerprint import (
+    FingerprintGenerationError,
+    generate_image_fingerprint,
+)
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
@@ -54,6 +58,11 @@ async def inspect_asset(file: UploadFile = File(...)) -> dict:
         image_path.write_bytes(content)
 
         try:
+            fingerprint = generate_image_fingerprint(image_path).as_dict()
+        except FingerprintGenerationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        try:
             parsed = read_and_parse_classic_manifest(image_path)
 
         except ClassicC2PANotFoundError:
@@ -69,6 +78,7 @@ async def inspect_asset(file: UploadFile = File(...)) -> dict:
                 "assertion_count": 0,
                 "validation_status": [],
                 "validation_results": None,
+                "fingerprint": fingerprint,
                 "manifest": None,
             }
 
@@ -98,5 +108,6 @@ async def inspect_asset(file: UploadFile = File(...)) -> dict:
             ],
             "validation_status": parsed["validation_status"],
             "validation_results": parsed["validation_results"],
+            "fingerprint": fingerprint,
             "manifest": manifest_store,
         }

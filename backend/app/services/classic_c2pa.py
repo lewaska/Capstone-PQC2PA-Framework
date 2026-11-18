@@ -4,6 +4,8 @@ from typing import Any
 
 from c2pa import Reader
 
+from app.adapters.c2pa_native import create_c2pa_validation_context
+
 # 공식 c2pa-python sdk 사용
 # classic manifest 읽고 active manifest 찾아 claim 정보를 추출합니다
 # 모든 assertion 분류
@@ -32,8 +34,9 @@ def read_classic_manifest(image_path: Path) -> dict[str, Any]:
     """공식 SDK로 Classic C2PA Manifest Store 전체를 읽습니다."""
 
     try:
-        reader = Reader(str(image_path))
-        return json.loads(reader.json())
+        with create_c2pa_validation_context() as context:
+            with Reader(str(image_path), context=context) as reader:
+                return json.loads(reader.json())
     except Exception as exc:
         message = str(exc)
 
@@ -62,6 +65,8 @@ def classify_assertion(label: str) -> str:
         return "ACTIONS"
     if base_label in HARD_BINDING_LABELS:
         return "HARD_BINDING"
+    if base_label == "c2pa.soft-binding":
+        return "SOFT_BINDING"
     if base_label in {
         "c2pa.ingredient",
         "c2pa.ingredient.v2",

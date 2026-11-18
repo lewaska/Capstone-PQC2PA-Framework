@@ -28,7 +28,7 @@ addDirectory(["Adobe Photoshop"], "software", "저장·내보내기 때 Content 
 
 addDirectory(["ChatGPT"], "watermark", "출처 신호와 워터마크는 별개의 기술입니다.", "https://help.openai.com/en/articles/8912793-provenance-signals-content-credentials-synthid-in-openai-generated-content", "외부 목록 수록", "SynthID");
 addDirectory(["Google Gemini"], "watermark", "SynthID 확인은 Google의 제공 기능을 확인해야 합니다.", "https://blog.google/innovation-and-ai/products/ai-image-verification-gemini-app/", "외부 목록 수록", "SynthID");
-addDirectory(["ElevenLabs"], "watermark", "오디오 관련 목록으로, 이 이미지 전용 뷰어의 검사 대상은 아닙니다.", DIRECTORY_SOURCE, "외부 목록 수록", "SynthID");
+addDirectory(["ElevenLabs"], "watermark", "오디오 관련 외부 목록 항목입니다. 이 뷰어는 SynthID를 검사하지 않습니다.", DIRECTORY_SOURCE, "외부 목록 수록", "SynthID");
 addDirectory(["Apple Image Playground"], "watermark", "외부 디렉터리에서 향후 제공 예정으로 표시한 항목입니다.", "https://www.apple.com/newsroom/2026/09/major-updates-for-apples-software-platforms-are-now-available/", "제공 예정", "SynthID");
 
 // Dates and requirements reproduce the external directory's labels, not a compatibility test.
@@ -56,88 +56,49 @@ const CAMERA_DETAILS = {
   "Sony Alpha 9 III": ["2024.02", "v2.00 이상"]
 };
 
-function directoryText(tag, className, value) {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  element.textContent = value;
-  return element;
-}
 
-function renderDirectory() {
-  const query = document.getElementById("deviceSearch").value.trim().toLocaleLowerCase("ko-KR");
-  const category = document.querySelector("[data-device-filter].is-active")?.dataset.deviceFilter || "all";
+function directoryElement(tag, className, content) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (content != null) node.textContent = content;
+  return node;
+}
+function renderViewerDirectory() {
+  const query = document.getElementById("directory-search").value.trim().toLocaleLowerCase("ko-KR");
+  const category = document.querySelector("[data-dir-filter].active")?.dataset.dirFilter || "all";
   const matches = DIRECTORY.filter(item => (category === "all" || item.category === category)
     && [item.name, item.note, item.signal, item.status].some(value => value.toLocaleLowerCase("ko-KR").includes(query)));
-  const grid = document.getElementById("deviceGrid");
+  const grid = document.getElementById("directory-grid");
   grid.replaceChildren();
-  const labels = { camera: "카메라·휴대폰", software: "앱·플랫폼", watermark: "워터마크" };
-  matches.forEach(item => {
-    const card = document.createElement("article");
-    card.className = "device-card";
-    const top = directoryText("div", "device-card-top", "");
-    top.append(directoryText("span", "device-category", labels[item.category]), directoryText("span", `device-status ${item.status === "외부 목록 수록" ? "" : "is-limited"}`, item.status));
-    const name = directoryText("h2", "", item.name);
-    const signal = directoryText("span", `signal-tag ${item.signal === "SynthID" ? "is-watermark" : ""}`, item.signal);
-    let metadata = null;
+  const categories = {camera:"카메라·휴대폰",software:"앱·플랫폼",watermark:"워터마크 참고"};
+  for (const item of matches) {
+    const card = directoryElement("article","directory-card");
+    const top = directoryElement("div","directory-card-top");
+    top.append(directoryElement("span","directory-type",categories[item.category]),
+      directoryElement("span",`directory-status ${item.status === "외부 목록 수록" ? "" : "limited"}`,item.status));
+    card.append(top,directoryElement("h2","",item.name));
+    const signal = directoryElement("span",`directory-signal ${item.signal === "SynthID" ? "watermark" : ""}`,item.signal);
+    card.append(signal);
     if (item.category === "camera" && CAMERA_DETAILS[item.name]) {
       const [released, requirement] = CAMERA_DETAILS[item.name];
-      metadata = directoryText("div", "device-meta", "");
-      metadata.append(
-        directoryText("span", "", `출시 ${released}`),
-        directoryText("span", "", `외부 목록 조건 · ${requirement}`)
-      );
+      card.append(directoryElement("p","directory-meta",`출시 ${released} · 외부 목록 조건: ${requirement}`));
     }
-    const note = directoryText("p", "", item.note);
-    const link = directoryText("a", "device-source", item.source === DIRECTORY_SOURCE ? "목록 원문 ↗" : "관련 안내 ↗");
-    link.href = item.source;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    card.append(top, name, signal);
-    if (metadata) card.append(metadata);
-    card.append(note, link);
-    grid.append(card);
-  });
-  document.getElementById("deviceCount").textContent = `${matches.length}개 항목`;
-  document.getElementById("deviceEmpty").hidden = matches.length !== 0;
-}
-
-async function copyCode(id, button) {
-  const snippet = document.getElementById(id)?.textContent || "";
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(snippet);
-    } else {
-      const field = document.createElement("textarea");
-      field.value = snippet;
-      field.style.position = "fixed";
-      field.style.opacity = "0";
-      document.body.append(field);
-      field.select();
-      const copied = document.execCommand("copy");
-      field.remove();
-      if (!copied) throw new Error("Clipboard unavailable");
-    }
-    button.textContent = "복사됨";
-    setTimeout(() => { button.textContent = "코드 복사"; }, 1800);
-  } catch {
-    button.textContent = "복사 실패";
-    setTimeout(() => { button.textContent = "코드 복사"; }, 1800);
+    card.append(directoryElement("p","directory-note",item.note));
+    const link = directoryElement("a","directory-source",item.source === DIRECTORY_SOURCE ? "목록 원문 보기 ↗" : "관련 공식 안내 ↗");
+    link.href = item.source; link.target = "_blank"; link.rel = "noopener noreferrer";
+    card.append(link); grid.append(card);
   }
+  document.getElementById("directory-count").textContent = `검색 결과 ${matches.length}개 · 전체 ${DIRECTORY.length}개`;
+  document.getElementById("directory-empty").hidden = matches.length > 0;
 }
-
-function initResources() {
-  document.getElementById("deviceSearch").addEventListener("input", renderDirectory);
-  document.querySelectorAll("[data-device-filter]").forEach(button => button.addEventListener("click", () => {
-    document.querySelectorAll("[data-device-filter]").forEach(option => {
-      const active = option === button;
-      option.classList.toggle("is-active", active);
-      option.setAttribute("aria-pressed", String(active));
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("directory-search").addEventListener("input",renderViewerDirectory);
+  document.querySelectorAll("[data-dir-filter]").forEach(button => button.addEventListener("click", () => {
+    document.querySelectorAll("[data-dir-filter]").forEach(option => {
+      const active = option === button; option.classList.toggle("active",active);
+      option.setAttribute("aria-pressed",String(active));
     });
-    renderDirectory();
+    renderViewerDirectory();
   }));
-  document.querySelectorAll("[data-copy-code]").forEach(button =>
-    button.addEventListener("click", () => copyCode(button.dataset.copyCode, button)));
-  renderDirectory();
-}
-
-document.addEventListener("DOMContentLoaded", initResources);
+  renderViewerDirectory();
+});

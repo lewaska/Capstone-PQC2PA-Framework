@@ -1,0 +1,755 @@
+openapi: 3.1.0
+info:
+  title: PQ-C2PA Hybrid Framework API
+  version: 2.0.0
+  description: >-
+    Frontend contract for a Classic C2PA Update Manifest embedded in an image
+    and a separate PQC Manifest stored by the framework. Both manifests share
+    one io.iscc.v0 ISCC-SEQ fingerprint. The PQC Manifest rebuilds every parsed
+    source assertion, uses SHA3-256 for hard bindings and claim assertion
+    references, and signs the claim with ML-DSA-65.
+servers:
+  - url: /api/v1
+tags:
+  - name: Assets
+  - name: Augmentations
+  - name: Manifest Pairs
+  - name: Validations
+
+paths:
+  /assets/inspect:
+    post:
+      tags: [Assets]
+      operationId: inspectAsset
+      summary: Inspect source C2PA, timestamp, and fingerprint
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: Inspection result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InspectEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+
+  /augmentations:
+    post:
+      tags: [Augmentations]
+      operationId: createAugmentation
+      summary: Create a Classic/PQC manifest pair
+      description: >-
+        Generates one shared fingerprint, embeds a Classic Update Manifest,
+        creates a separate PQC Manifest, and persists the two as one pair.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Classic C2PA JPEG or PNG
+      responses:
+        "202":
+          description: Job accepted
+          headers:
+            Retry-After:
+              schema: { type: integer, minimum: 1, default: 2 }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateAugmentationEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /augmentations/{augmentation_id}:
+    get:
+      tags: [Augmentations]
+      operationId: getAugmentation
+      summary: Get manifest-pair creation state
+      parameters:
+        - $ref: "#/components/parameters/AugmentationId"
+      responses:
+        "200":
+          description: Current job state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AugmentationEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /augmentations/{augmentation_id}/asset:
+    get:
+      tags: [Augmentations]
+      operationId: downloadAugmentedAsset
+      summary: Download the image containing the Classic Update Manifest
+      parameters:
+        - $ref: "#/components/parameters/AugmentationId"
+      responses:
+        "200":
+          description: Augmented image
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410": { $ref: "#/components/responses/Gone" }
+
+  /manifest-pairs/{manifest_pair_id}:
+    get:
+      tags: [Manifest Pairs]
+      operationId: getManifestPair
+      summary: Get paired manifest summary
+      parameters:
+        - $ref: "#/components/parameters/ManifestPairId"
+      responses:
+        "200":
+          description: Stored pair
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManifestPairEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /manifest-pairs/{manifest_pair_id}/classic:
+    get:
+      tags: [Manifest Pairs]
+      operationId: getClassicManifest
+      summary: Get normalized Classic Update Manifest
+      parameters:
+        - $ref: "#/components/parameters/ManifestPairId"
+      responses:
+        "200":
+          description: Classic manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClassicManifestEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /manifest-pairs/{manifest_pair_id}/pqc:
+    get:
+      tags: [Manifest Pairs]
+      operationId: getPqcManifest
+      summary: Get normalized PQC Manifest
+      parameters:
+        - $ref: "#/components/parameters/ManifestPairId"
+      responses:
+        "200":
+          description: PQC manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PqcManifestEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /validations:
+    post:
+      tags: [Validations]
+      operationId: createValidation
+      summary: Resolve and validate a Classic/PQC pair
+      description: >-
+        Recomputes the fingerprint, resolves the DB pair, validates both
+        manifests, and checks whether an expected embedded Classic Update
+        Manifest has been removed.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "202":
+          description: Validation accepted
+          headers:
+            Retry-After:
+              schema: { type: integer, minimum: 1, default: 2 }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateValidationEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /validations/{validation_id}:
+    get:
+      tags: [Validations]
+      operationId: getValidation
+      summary: Get validation job state
+      parameters:
+        - $ref: "#/components/parameters/ValidationId"
+      responses:
+        "200":
+          description: Validation state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /validations/{validation_id}/report:
+    get:
+      tags: [Validations]
+      operationId: getValidationReport
+      summary: Get Classic, PQC, and cross-validation report
+      parameters:
+        - $ref: "#/components/parameters/ValidationId"
+      responses:
+        "200":
+          description: Completed report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationReportEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+components:
+  parameters:
+    AugmentationId:
+      name: augmentation_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    ManifestPairId:
+      name: manifest_pair_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    ValidationId:
+      name: validation_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    PayloadTooLarge:
+      description: Upload limit exceeded
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    UnsupportedMediaType:
+      description: Only JPEG and PNG are accepted
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    UnprocessableEntity:
+      description: Image or C2PA data cannot be inspected
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: Resource is not ready
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Gone:
+      description: Binary asset expired
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    InternalError:
+      description: Internal processing failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    ServiceUnavailable:
+      description: Signer, TSA, or storage unavailable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    Meta:
+      type: object
+      additionalProperties: false
+      required: [request_id, api_version]
+      properties:
+        request_id: { type: string }
+        api_version: { type: string, const: v1 }
+
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable, details]
+      properties:
+        code: { type: string, examples: [SOURCE_C2PA_NOT_FOUND] }
+        message: { type: string }
+        stage:
+          oneOf:
+            - $ref: "#/components/schemas/JobStage"
+            - type: "null"
+        retryable: { type: boolean }
+        details: { type: object, additionalProperties: true }
+
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, meta]
+      properties:
+        error: { $ref: "#/components/schemas/ApiError" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    JobStatus:
+      type: string
+      enum: [QUEUED, PROCESSING, COMPLETED, FAILED, CANCELLED]
+
+    JobStage:
+      type: string
+      enum:
+        - UPLOADED
+        - UPLOAD_VALIDATION
+        - SOURCE_C2PA_READING
+        - SOURCE_C2PA_VALIDATION
+        - FINGERPRINT_GENERATION
+        - SOURCE_TIMESTAMP_CHECK
+        - SOURCE_TIMESTAMP_ISSUANCE
+        - CLASSIC_UPDATE_BUILDING
+        - CLASSIC_UPDATE_SIGNING
+        - CLASSIC_UPDATE_VALIDATION
+        - ASSERTION_EXTRACTION
+        - PQC_ASSERTION_REBUILDING
+        - PQC_ASSERTION_HASHING
+        - PQC_CLAIM_BUILDING
+        - ML_DSA_SIGNING
+        - PQC_TIMESTAMPING
+        - PAIR_PERSISTING
+        - FINAL_VALIDATION
+        - FINGERPRINT_RESOLUTION
+        - CLASSIC_VALIDATION
+        - PQC_VALIDATION
+        - CROSS_MANIFEST_VALIDATION
+        - COMPLETED
+
+    OverallStatus:
+      type: string
+      enum: [TRUSTED, UNTRUSTED, INDETERMINATE]
+    CheckStatus:
+      type: string
+      enum: [VALID, INVALID, INDETERMINATE, NOT_PRESENT, NOT_APPLICABLE, NOT_EVALUATED]
+    TrustScope:
+      type: string
+      enum: [FRAMEWORK_LOCAL]
+    TimestampOrigin:
+      type: string
+      enum: [EXISTING, ISSUED_BY_FRAMEWORK, NOT_PRESENT]
+
+    FingerprintUnit:
+      type: object
+      additionalProperties: false
+      required: [type, iscc]
+      properties:
+        type: { type: string, enum: [IMAGE, DATA, INSTANCE] }
+        iscc: { type: string, pattern: "^ISCC:" }
+
+    Fingerprint:
+      type: object
+      additionalProperties: false
+      required: [algorithm, display, value_base64, units]
+      description: >-
+        value_base64 encodes the canonical ISCC-SEQ bytes. It is not a second
+        fingerprint. IMAGE is the primary soft-resolution lookup unit.
+      properties:
+        algorithm: { type: string, const: io.iscc.v0 }
+        display: { type: string, pattern: "^ISCC:" }
+        value_base64: { type: string, contentEncoding: base64 }
+        units:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: "#/components/schemas/FingerprintUnit" }
+
+    AssetSummary:
+      type: object
+      additionalProperties: false
+      required: [filename, media_type, size_bytes, sha256]
+      properties:
+        filename: { type: string }
+        media_type: { type: string, enum: [image/jpeg, image/png] }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+
+    TimestampSummary:
+      type: object
+      additionalProperties: false
+      required: [present, origin, status, target_manifest_id, generation_time, message_imprint_algorithm, token_sha256]
+      properties:
+        present: { type: boolean }
+        origin: { $ref: "#/components/schemas/TimestampOrigin" }
+        status: { $ref: "#/components/schemas/CheckStatus" }
+        target_manifest_id: { type: [string, "null"] }
+        generation_time: { type: [string, "null"], format: date-time }
+        message_imprint_algorithm: { type: [string, "null"] }
+        token_sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+
+    SourceClassicSummary:
+      type: object
+      additionalProperties: false
+      required: [present, validation_status, active_manifest_id, manifest_count, assertion_count, timestamp]
+      properties:
+        present: { type: boolean }
+        validation_status: { $ref: "#/components/schemas/OverallStatus" }
+        active_manifest_id: { type: [string, "null"] }
+        manifest_count: { type: integer, minimum: 0 }
+        assertion_count: { type: integer, minimum: 0 }
+        timestamp: { $ref: "#/components/schemas/TimestampSummary" }
+
+    InspectResult:
+      type: object
+      additionalProperties: false
+      required: [asset, classic_c2pa, fingerprint]
+      properties:
+        asset: { $ref: "#/components/schemas/AssetSummary" }
+        classic_c2pa: { $ref: "#/components/schemas/SourceClassicSummary" }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+    InspectEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/InspectResult" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    CreateAugmentation:
+      type: object
+      additionalProperties: false
+      required: [augmentation_id, status, stage, progress_percent, created_at, status_url]
+      properties:
+        augmentation_id: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/JobStage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        created_at: { type: string, format: date-time }
+        status_url: { type: string }
+    CreateAugmentationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/CreateAugmentation" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    ManifestRef:
+      type: object
+      additionalProperties: false
+      required: [manifest_id, manifest_type, storage, detail_url]
+      properties:
+        manifest_id: { type: string }
+        manifest_type: { type: string, enum: [CLASSIC_UPDATE, PQC] }
+        storage: { type: string, enum: [EMBEDDED_AND_DB, DB_ONLY] }
+        detail_url: { type: string }
+
+    ManifestPair:
+      type: object
+      additionalProperties: false
+      required: [manifest_pair_id, fingerprint, source_active_manifest_id, classic, pqc, source_timestamp, created_at]
+      properties:
+        manifest_pair_id: { type: string }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        source_active_manifest_id: { type: string }
+        classic: { $ref: "#/components/schemas/ManifestRef" }
+        pqc: { $ref: "#/components/schemas/ManifestRef" }
+        source_timestamp: { $ref: "#/components/schemas/TimestampSummary" }
+        created_at: { type: string, format: date-time }
+    ManifestPairEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/ManifestPair" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    AugmentationResult:
+      type: object
+      additionalProperties: false
+      required: [asset, manifest_pair_id, fingerprint, source_timestamp, overall_status, trust_scope, download_url, pair_url, validation_id, validation_url, report_url]
+      properties:
+        asset: { $ref: "#/components/schemas/AssetSummary" }
+        manifest_pair_id: { type: string }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        source_timestamp: { $ref: "#/components/schemas/TimestampSummary" }
+        overall_status: { $ref: "#/components/schemas/OverallStatus" }
+        trust_scope: { $ref: "#/components/schemas/TrustScope" }
+        download_url: { type: string }
+        pair_url: { type: string }
+        validation_id: { type: string }
+        validation_url: { type: string }
+        report_url: { type: string }
+
+    Augmentation:
+      type: object
+      additionalProperties: false
+      required: [augmentation_id, status, stage, progress_percent, created_at, updated_at, completed_at, source, result, error]
+      properties:
+        augmentation_id: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/JobStage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        source:
+          oneOf:
+            - $ref: "#/components/schemas/InspectResult"
+            - type: "null"
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/AugmentationResult"
+            - type: "null"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ApiError"
+            - type: "null"
+    AugmentationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/Augmentation" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    CertificateSummary:
+      type: object
+      additionalProperties: false
+      required: [subject, issuer, serial_number, fingerprint_sha256, not_before, not_after]
+      properties:
+        subject: { type: string }
+        issuer: { type: string }
+        serial_number: { type: string }
+        fingerprint_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+
+    SignatureSummary:
+      type: object
+      additionalProperties: false
+      required: [algorithm, cryptographic_status, trust_status, trust_scope, certificate]
+      properties:
+        algorithm: { type: string, enum: [ES256, ML-DSA-65] }
+        cryptographic_status: { $ref: "#/components/schemas/CheckStatus" }
+        trust_status: { $ref: "#/components/schemas/CheckStatus" }
+        trust_scope: { $ref: "#/components/schemas/TrustScope" }
+        certificate:
+          oneOf:
+            - $ref: "#/components/schemas/CertificateSummary"
+            - type: "null"
+
+    ClassicManifest:
+      type: object
+      additionalProperties: false
+      required: [manifest_id, manifest_type, parent_manifest_id, soft_binding, source_timestamp, signature, assertions]
+      properties:
+        manifest_id: { type: string }
+        manifest_type: { type: string, const: CLASSIC_UPDATE }
+        parent_manifest_id: { type: string }
+        soft_binding: { $ref: "#/components/schemas/Fingerprint" }
+        source_timestamp: { $ref: "#/components/schemas/TimestampSummary" }
+        signature: { $ref: "#/components/schemas/SignatureSummary" }
+        assertions:
+          type: array
+          items: { type: object, additionalProperties: true }
+    ClassicManifestEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/ClassicManifest" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    AssertionSummary:
+      type: object
+      additionalProperties: false
+      required: [label, kind, source_uri, data, hash_algorithm, hash]
+      properties:
+        label: { type: string }
+        kind:
+          type: string
+          enum: [ACTIONS, HARD_BINDING, SOFT_BINDING, INGREDIENT, METADATA, TIMESTAMP_EVIDENCE, OTHER]
+        source_uri: { type: [string, "null"] }
+        data: {}
+        hash_algorithm: { type: string, const: SHA3-256 }
+        hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+
+    ClaimAssertionRef:
+      type: object
+      additionalProperties: false
+      required: [label, uri, hash_algorithm, hash]
+      properties:
+        label: { type: string }
+        uri: { type: string }
+        hash_algorithm: { type: string, const: SHA3-256 }
+        hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+
+    PqcClaim:
+      type: object
+      additionalProperties: false
+      required: [label, profile_version, source_manifest_id, hash_algorithm, signature_algorithm, assertion_references]
+      properties:
+        label: { type: string, const: c2pa.claim.v2 }
+        profile_version: { type: string, const: pq-c2pa-hybrid-1 }
+        source_manifest_id: { type: string }
+        hash_algorithm: { type: string, const: SHA3-256 }
+        signature_algorithm: { type: string, const: ML-DSA-65 }
+        assertion_references:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ClaimAssertionRef" }
+
+    PqcManifest:
+      type: object
+      additionalProperties: false
+      required: [manifest_id, manifest_pair_id, format, profile_version, fingerprint, claim, assertions, source_timestamp_evidence, signature, timestamp]
+      properties:
+        manifest_id: { type: string }
+        manifest_pair_id: { type: string }
+        format: { type: string, const: PQ-C2PA }
+        profile_version: { type: string, const: pq-c2pa-hybrid-1 }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        claim: { $ref: "#/components/schemas/PqcClaim" }
+        assertions:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/AssertionSummary" }
+        source_timestamp_evidence: { $ref: "#/components/schemas/TimestampSummary" }
+        signature: { $ref: "#/components/schemas/SignatureSummary" }
+        timestamp: { $ref: "#/components/schemas/TimestampSummary" }
+    PqcManifestEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/PqcManifest" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    CreateValidation:
+      type: object
+      additionalProperties: false
+      required: [validation_id, status, stage, progress_percent, created_at, status_url]
+      properties:
+        validation_id: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/JobStage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        created_at: { type: string, format: date-time }
+        status_url: { type: string }
+    CreateValidationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/CreateValidation" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    Validation:
+      type: object
+      additionalProperties: false
+      required: [validation_id, status, stage, progress_percent, overall_status, created_at, updated_at, completed_at, report_url, error]
+      properties:
+        validation_id: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        stage: { $ref: "#/components/schemas/JobStage" }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        overall_status:
+          oneOf:
+            - $ref: "#/components/schemas/OverallStatus"
+            - type: "null"
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        report_url: { type: [string, "null"] }
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ApiError"
+            - type: "null"
+    ValidationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/Validation" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    ResolutionResult:
+      type: object
+      additionalProperties: false
+      required: [status, manifest_pair_id, matched_unit, candidates]
+      properties:
+        status: { type: string, enum: [MATCHED, NOT_FOUND, AMBIGUOUS] }
+        manifest_pair_id: { type: [string, "null"] }
+        matched_unit: { type: [string, "null"], enum: [IMAGE, DATA, INSTANCE, null] }
+        candidates: { type: integer, minimum: 0 }
+
+    ValidationCheck:
+      type: object
+      additionalProperties: false
+      required: [component, name, status, code, message, manifest_id, assertion_label]
+      properties:
+        component:
+          type: string
+          enum: [ASSET, FINGERPRINT, CLASSIC, PQC, PAIR, SOURCE_TIMESTAMP, PQC_TIMESTAMP]
+        name: { type: string }
+        status: { $ref: "#/components/schemas/CheckStatus" }
+        code: { type: string }
+        message: { type: string }
+        manifest_id: { type: [string, "null"] }
+        assertion_label: { type: [string, "null"] }
+
+    ValidationReport:
+      type: object
+      additionalProperties: false
+      required: [validation_id, validated_at, policy_version, profile_version, overall_status, trust_scope, asset, fingerprint, resolution, manifest_pair, checks, failures, warnings]
+      properties:
+        validation_id: { type: string }
+        validated_at: { type: string, format: date-time }
+        policy_version: { type: string }
+        profile_version: { type: string, const: pq-c2pa-hybrid-1 }
+        overall_status: { $ref: "#/components/schemas/OverallStatus" }
+        trust_scope: { $ref: "#/components/schemas/TrustScope" }
+        asset: { $ref: "#/components/schemas/AssetSummary" }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        resolution: { $ref: "#/components/schemas/ResolutionResult" }
+        manifest_pair:
+          oneOf:
+            - $ref: "#/components/schemas/ManifestPair"
+            - type: "null"
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/ValidationCheck" }
+        failures:
+          type: array
+          items: { $ref: "#/components/schemas/ApiError" }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/ApiError" }
+    ValidationReportEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/ValidationReport" }
+        meta: { $ref: "#/components/schemas/Meta" }

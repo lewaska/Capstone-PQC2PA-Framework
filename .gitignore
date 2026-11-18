@@ -30,6 +30,14 @@ uploads/
 outputs/
 temp/
 tmp/
+runtime/
+parallel-test.png
+*.srl
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE and operating system
 .vscode/
