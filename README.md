@@ -152,7 +152,7 @@ This web framework verifies and preserves existing C2PA provenance records while
 
 - **Paper in Progress**
 
-  The team is writing *Design of a Framework for C2PA Metadata Verification and Preservation Using KpqC* based on this research project. We plan to submit it to the 2027 Summer Conference of the Korea Institute of Information Security & Cryptology (CISC S’27).
+  The team is writing paper based on this research project. We plan to submit it to the 2027 Summer Conference of the Korea Institute of Information Security & Cryptology (CISC S’27).
 
 ## Repository Guide
 
