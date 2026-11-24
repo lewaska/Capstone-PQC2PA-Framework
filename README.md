@@ -68,7 +68,7 @@
 
 - **논문 작성**
 
-  본 팀은 연구형 프로젝트의 설계와 검증 결과를 바탕으로 「KpqC를 활용한 C2PA 메타데이터 검증 및 보존 프레임워크 설계 연구」를 작성 중입니다. 2027년 한국정보보호학회 하계학술대회(CISC S'27) 제출을 목표로 합니다.
+  본 팀은 연구형 프로젝트의 설계와 검증 결과를 바탕으로 논문을 작성 중입니다. 2027년 한국정보보호학회 하계학술대회(CISC S'27) 제출을 목표로 합니다.
 
 ## 저장소 안내
 
@@ -82,14 +82,100 @@
 
 ---
 
+# PQ-C2PA Web Framework
+
+This web framework verifies and preserves existing C2PA provenance records while providing a separate post-quantum signature verification path. Developed by Team Daebangeo for Hallym University’s Software Capstone Design project, it links Classic C2PA manifests with a PQC manifest signed using KpqC HAETAE-3.
+
+## Background and Research Objective
+
+- **C2PA and Image Provenance**
+
+  A digital image may contain pixel data as well as metadata such as EXIF information and details about the tool used to create it. A C2PA manifest store records provenance and edit history. Each manifest consists of assertions describing the content, a claim containing assertion hashes and references, and a digital signature over the claim. A verifier checks the signature, assertion hashes, and hard binding to assess the integrity of the record and its connection to the image.
+
+- **Long-Term Verification under Quantum-Computing Threats**
+
+  Conventional RSA and elliptic-curve signatures face a long-term threat from quantum computing. Rather than replacing previously issued Classic C2PA records, this project aims to preserve their provenance history and add a separately signed post-quantum record covering the evidence available at issuance.
+
+## Threat Model and Design
+
+- **Attack Scenario 1 — Provenance Forgery**
+
+  If an attacker obtains a private key used by a conventional signature scheme, they may alter provenance assertions and produce a new Classic signature. The framework preserves evidence and references from a verified Classic manifest in a separate PQC manifest (P1), signed with HAETAE-3. P1 provides additional evidence for detecting subsequent changes to the Classic record. It cannot retroactively establish the authenticity of a record that was already forged before P1 was issued.
+
+- **Attack Scenario 2 — Removal of C2PA Records**
+
+  When an image’s C2PA manifest store is removed, its embedded provenance can no longer be read through the usual verification path. The framework uses the Image-Code component of an image fingerprint to search the database for candidate protection records. It then reconnects a stored manifest and verifies its signature and hard binding. A fingerprint match alone does not establish identity or authorize recovery.
+
+- **Parallel Classic and PQC Records**
+
+  The output image retains its Classic C2PA records and, when needed, contains a newly signed update manifest (M1). P1 is stored separately in the database rather than embedded in the image. M1 references the earlier provenance manifest (M0), while the Classic record and P1 are linked through a shared soft-binding fingerprint and a database issuance record. P1 also contains references to the original evidence and a SHA3-256 content binding. This design supports both the existing C2PA verification path and the project’s dedicated PQC verification path.
+
+## Implementation and Processing Flow
+
+- **Upload and Candidate Search**
+
+  After a user uploads a PNG or JPEG image, the backend checks its format and computes an image fingerprint. It uses Image-Code, which represents visual image features, to find candidate issuance records in PostgreSQL. Image-Code serves as a search key; every candidate must pass further verification.
+
+- **Classic Manifest Verification and Update**
+
+  For an image containing C2PA data, the C2PA SDK verifies the claim signature, assertions, and image hard binding. The backend checks the existing soft-binding assertion and, when necessary, creates a Classic update manifest (M1) containing the fingerprint and signs it with the project’s Classic signer. M1 references M0 as prior provenance, preserving the original assertions and signature history. A Classic manifest with a valid existing fingerprint can be retained without creating M1.
+
+- **PQC Manifest Issuance with KpqC HAETAE-3**
+
+  The backend parses the Classic evidence, serializes the P1 claim and its assertion references as CBOR, and assembles a JUMBF manifest. It builds the published HAETAE C reference implementation as a shared library and invokes it from Python to sign the P1 claim with HAETAE-3. Before storing the P1 bytes in the database, it verifies the new signature, references, and binding. P1 is a project-specific structure; ordinary C2PA verifiers are not expected to parse or verify it.
+
+- **Timestamp Evidence**
+
+  If a timestamp token (TST) is attached to the Classic signature, the framework preserves it in a P1 custom assertion. If the token is absent and the local timestamp authority (TSA) is available, it attaches a token to the Classic signature’s `sigTst2` field and records the corresponding evidence in P1. During issuance and lookup, it checks the token’s relationship to its target signature. The Classic signer and TSA use X.509 certificates verified against the project’s Root CA.
+
+- **Existing-Record Verification and Recovery**
+
+  For an existing protection record, the framework re-verifies the Classic signature, hard binding, P1 signature, and linkage between the records. When C2PA data has been removed, it provides a recovered image only after reconnecting the stored Classic manifest store and verifying the result. Ambiguous candidates or failed checks are never reported as successful recovery.
+
+- **Storage and Results**
+
+  PostgreSQL links fingerprints, Classic manifest stores, P1 bytes, issuance pairs, timestamp evidence, and validation results. The backend returns processing and verification results to the web interface, where users can inspect the Classic and P1 status and download the output image and reports. P1 signatures are verified with a locally pinned HAETAE public key. Trust in the project’s Root CA is limited to the configured local trust anchor and is distinct from trust under the official C2PA trust list.
+
+## Applications and Research Contributions
+
+- **Preserving Provenance while Adding Protection**
+
+  The framework retains the signature history of the original Classic manifest and adds a HAETAE-3 verification path. Long-lived image provenance can therefore be examined through both Classic and post-quantum records.
+
+- **Verification-Gated Soft-Binding Recovery**
+
+  Image-Code lookup is combined with verification of stored evidence. If a C2PA record has been removed but a verifiable protection record remains in the database, the framework can attempt reconnection. A visually similar fingerprint alone is never treated as proof of recovery.
+
+- **Web Demonstration and Reports**
+
+  The web application demonstrates verification and PQC conversion of a new C2PA image, as well as recovery after removal of a C2PA chunk. It displays the processing path and Classic/P1 verification results and provides an output image and PDF/JSON reports.
+
+- **Paper in Progress**
+
+  The team is writing *Design of a Framework for C2PA Metadata Verification and Preservation Using KpqC* based on this research project. We plan to submit it to the 2027 Summer Conference of the Korea Institute of Information Security & Cryptology (CISC S’27).
+
+## Repository Guide
+
+- **Key Components**
+
+  `backend/app/api/routes/conversions.py` handles the conversion API; `backend/app/services/classic_preparation.py` prepares Classic manifests; `backend/app/services/pqc2pa.py` builds and verifies P1; and `backend/app/services/haetae.py` integrates the HAETAE library. Database lookup and registration are implemented in `conversion_lookup.py` and `conversion_registration.py`. The web interface is in `frontend/viewer/`.
+
+- **Deployment Components**
+
+  The service comprises a web frontend, a FastAPI backend, PostgreSQL, and file storage for results. Deployment also requires separate configuration for the Classic signer and TSA, the HAETAE shared library, and its signing key. Private keys and environment files are not included in this repository.
+
+---
+
+
 ## Team roles
 
-- **Si-eun (Team Lead):** Backend development, project coordination, API specifications, and schedule management.
-- **Dae-gyu:** Frontend development and ideation.
-- **Su-min:** Database design and project planning.
+- **Sieun (Team Lead):** Backend development, project coordination, API specifications, and schedule management.
+- **Daegyu:** Frontend development and ideation.
+- **Sumin:** Database design and project planning.
 
 ## Working process
 
 - **Meetings:** We held regular meetings at agreed dates and times and used spare meeting slots when schedules changed.
 - **Updates:** We shared project updates through Notion and the KakaoTalk team chat as they arose, regardless of the day or time.
 - **Artifacts:** We stored code, documents, plans, and working files in GitHub, Google Drive, Notion, and KakaoTalk according to their purpose.
+
